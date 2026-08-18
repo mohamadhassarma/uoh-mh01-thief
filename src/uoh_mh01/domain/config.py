@@ -55,10 +55,22 @@ class ScoringConfig:
 
 
 @dataclass(frozen=True)
+class NetworkConfig:
+    # Only the two signed values stage 2 needs are parsed here. The rest of
+    # network_and_league (num_games, diversity_reward, min_games_to_pass,
+    # max_games_per_team, token_budget_per_series) belongs to later stages'
+    # concerns (the live league, stage 7) and is intentionally left unparsed
+    # until something actually needs it.
+    response_timeout_sec: float
+    watchdog_timeout_sec: float
+
+
+@dataclass(frozen=True)
 class GameConfig:
     board: BoardConfig
     movement: MovementConfig
     scoring: ScoringConfig
+    network: NetworkConfig
 
 
 def _require(d: dict[str, Any], key: str, path: str) -> Any:
@@ -85,6 +97,13 @@ def _require_nonneg_int(d: dict[str, Any], key: str, path: str) -> int:
     value = _require(d, key, path)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ConfigError(f"config/game.json: '{path}.{key}' must be a non-negative integer, got {value!r}")
+    return value
+
+
+def _require_positive_number(d: dict[str, Any], key: str, path: str) -> float:
+    value = _require(d, key, path)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ConfigError(f"config/game.json: '{path}.{key}' must be a positive number, got {value!r}")
     return value
 
 
@@ -186,6 +205,16 @@ def _parse_scoring(raw: dict[str, Any]) -> ScoringConfig:
     )
 
 
+def _parse_network(raw: dict[str, Any]) -> NetworkConfig:
+    path = "network_and_league"
+    section = _require_dict(raw, path, "$")
+
+    return NetworkConfig(
+        response_timeout_sec=_require_positive_number(section, "response_timeout_sec", path),
+        watchdog_timeout_sec=_require_positive_number(section, "watchdog_timeout_sec", path),
+    )
+
+
 def parse_config(raw: dict[str, Any]) -> GameConfig:
     """Validate an already-parsed JSON dict and build a frozen GameConfig."""
     if not isinstance(raw, dict):
@@ -194,6 +223,7 @@ def parse_config(raw: dict[str, Any]) -> GameConfig:
         board=_parse_board(raw),
         movement=_parse_movement(raw),
         scoring=_parse_scoring(raw),
+        network=_parse_network(raw),
     )
 
 

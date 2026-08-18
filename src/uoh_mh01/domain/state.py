@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Optional
 
 from .board import Board, Direction, Position
 from .config import GameConfig, MovementConfig
@@ -32,7 +31,7 @@ def other_side(side: Side) -> Side:
     return Side.THIEF if side is Side.POLICE else Side.POLICE
 
 
-def actions_taken_by(state: "MatchState", side: Side) -> int:
+def actions_taken_by(state: MatchState, side: Side) -> int:
     """How many of its own actions `side` has taken so far — the basis for
     the per-player max_moves ceiling. See match.py's MAX_MOVES_COUNTING_BASIS.
     """
@@ -84,7 +83,7 @@ class MatchState:
     move_log: tuple[LogEntry, ...]
 
     @staticmethod
-    def initial(config: GameConfig, first_mover: Side) -> "MatchState":
+    def initial(config: GameConfig, first_mover: Side) -> MatchState:
         board = Board(grid_size=config.board.grid_size)
         return MatchState(
             config=config,
