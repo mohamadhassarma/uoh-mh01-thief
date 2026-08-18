@@ -15,6 +15,17 @@
 - [ ] Agree `config/game.json` byte-for-byte with opponent group
 - [ ] Agree `axis_origin_corner` and `axis_start_index`
 - [ ] Agree `map_area` and `hint_max_words`
+- [ ] Agree the counting basis for `max_moves` (per-player vs combined) — see
+      PRD-01 "Open questions"; this engine currently assumes per-player
+- [ ] Agree who moves first (`FIRST_MOVER`) — see PRD-01 "Open questions"
+- [ ] Find or agree a trigger condition for `tie_score` — none is implemented
+
+## Known limitations
+- [ ] `axis_origin_corner` and `axis_start_index` are negotiable per the
+      mandatory parameter table, but this engine currently only implements
+      `"top-left"` / `0`. Any other agreed value requires implementation work
+      in `board.py`'s move deltas (and revisiting `config.py`'s validation)
+      before it can be used — it is not a config error, just unbuilt.
 
 ## Admin
 - [ ] Fill team member IDs in `config/thief/game.toml`
