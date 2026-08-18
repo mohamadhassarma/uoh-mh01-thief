@@ -43,6 +43,8 @@ def build_server(runtime: PeerServerHandlers, *, name: str = "uoh-mh01-peer") ->
         claimed_offending_side: str | None = None,
         commit: str = "",
         sub_game_number: int = 1,
+        smell_grid: dict[str, float] | None = None,
+        hint: str = "",
     ) -> dict[str, Any]:
         request = parse_move_request(
             role,
@@ -57,6 +59,8 @@ def build_server(runtime: PeerServerHandlers, *, name: str = "uoh-mh01-peer") ->
             claimed_offending_side,
             commit,
             sub_game_number,
+            smell_grid,
+            hint,
         )
         response = await runtime.receive_opponent_move(request)
         return response.to_dict()

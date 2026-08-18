@@ -23,6 +23,8 @@ def parse_move_request(
     claimed_offending_side: str | None = None,
     commit: str = "",
     sub_game_number: int = 1,
+    smell_grid: dict[str, float] | None = None,
+    hint: str = "",
 ) -> MoveRequest:
     if role not in ("police", "thief"):
         raise ProtocolError(f"role must be 'police' or 'thief', got {role!r}")
@@ -50,6 +52,8 @@ def parse_move_request(
         claimed_offending_side=claimed_offending_side,
         commit=commit,
         sub_game_number=sub_game_number,
+        smell_grid=smell_grid,
+        hint=hint,
     )
 
 
@@ -63,6 +67,8 @@ def action_to_request(
     claimed_condition: str | None = None,
     commit: str = "",
     sub_game_number: int = 1,
+    smell_grid: dict[str, float] | None = None,
+    hint: str = "",
 ) -> MoveRequest:
     if isinstance(action, MoveAction):
         base = {
@@ -88,6 +94,8 @@ def action_to_request(
         claimed_condition=claimed_condition,
         commit=commit,
         sub_game_number=sub_game_number,
+        smell_grid=smell_grid,
+        hint=hint,
     )
 
 

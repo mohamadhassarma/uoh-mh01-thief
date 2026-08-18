@@ -72,6 +72,19 @@ class MoveRequest:
     # (rather than misattribute to the wrong sub-game, or flatly reject) a
     # message that legitimately arrived slightly early.
     sub_game_number: int = 1
+    # PRD-04: this sender's own current scent field, `{"row,col": intensity}`
+    # (domain/scent.py's `serialize_field`) — sent live alongside the move,
+    # same as the direction/target fields, and sealed into the same commit
+    # (domain/sealed_payload.py) so a grid that differs between what was
+    # sent and what was later revealed is a tamper finding, not silently
+    # accepted. Empty for declare_terminal (no position change to emit at).
+    smell_grid: dict[str, float] | None = None
+    # PRD-04: the mover's own free-language hint. Always a wire field from
+    # this stage on (so stage 5 needs no protocol change to populate it),
+    # but no strategy exists yet to generate one — see domain/belief.py's
+    # HintClaim for why an empty/absent hint is never treated as truthful
+    # silence, just as absence of a claim.
+    hint: str = ""
 
     def to_kwargs(self) -> dict[str, Any]:
         return {
@@ -87,4 +100,6 @@ class MoveRequest:
             "claimed_offending_side": self.claimed_offending_side,
             "commit": self.commit,
             "sub_game_number": self.sub_game_number,
+            "smell_grid": self.smell_grid,
+            "hint": self.hint,
         }

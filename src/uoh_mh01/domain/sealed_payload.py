@@ -23,8 +23,23 @@ def state_str(grid_size: int, position: Position, barriers: frozenset[Position])
     return f"grid={grid_size}x{grid_size};self={[position.row, position.col]};barriers={sorted_barriers}"
 
 
-def build_move_payload(*, step: int, role: str, action_type: str, detail: str, state: str) -> dict[str, Any]:
-    return {"step": step, "role": role, "action_type": action_type, "detail": detail, "state": state}
+def build_move_payload(
+    *, step: int, role: str, action_type: str, detail: str, state: str, smell_grid: dict[str, float] | None = None
+) -> dict[str, Any]:
+    # PRD-04: the scent field is part of the sealed record, not a side
+    # channel — a grid that differs between what was actually sent live and
+    # what gets revealed at audit is exactly the class of tampering
+    # commit-reveal exists to catch. `None` (declare_terminal, or a stage-3
+    # caller predating PRD-04) is normalized to `{}` so the sealed shape is
+    # stable regardless of caller.
+    return {
+        "step": step,
+        "role": role,
+        "action_type": action_type,
+        "detail": detail,
+        "state": state,
+        "smell_grid": smell_grid or {},
+    }
 
 
 def build_step_zero_payload(*, spec: dict[str, Any], code_version: str, group_name: str, sub_game_number: int) -> dict[str, Any]:

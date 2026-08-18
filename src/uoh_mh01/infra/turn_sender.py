@@ -13,6 +13,7 @@ import logging
 
 from ..domain.match import Action, BarrierAction, MoveAction
 from ..domain.reducers import apply_barrier, apply_move
+from ..domain.scent import advance_field, emit, serialize_field
 from ..domain.scoring import TerminalCondition
 from ..domain.terminal_detect import DetectedTerminal, detect_from_last_action, detect_pre_turn
 from .protocol_builders import action_to_request, declare_terminal_request
@@ -60,7 +61,16 @@ class _TurnSenderMixin(_TurnResolverMixin):
             claim = detect_from_last_action(new_state)
             entry = new_state.move_log[-1]
             self.state = new_state
-            commit = self._seal_own_record(step=turn_number, action_type=entry.action_type.value, detail=entry.detail)
+            # PRD-04: deposit + decay MY OWN trail once per my own full turn
+            # (book ch.4 cadence), around wherever this action left me — a
+            # move, a stay, or a barrier placement all keep the agent
+            # somewhere, and that "somewhere" is what gets scented.
+            deposit = emit(self._my_position(), new_state.board, self.config.pheromones)
+            self._own_scent_field = advance_field(self._own_scent_field, deposit, self.config.pheromones)
+            smell_grid = serialize_field(self._own_scent_field)
+            commit = self._seal_own_record(
+                step=turn_number, action_type=entry.action_type.value, detail=entry.detail, smell_grid=smell_grid
+            )
             self.log.record_action(self.state.move_log[-1])
             if claim is None:
                 self._advance_turn()
@@ -74,6 +84,7 @@ class _TurnSenderMixin(_TurnResolverMixin):
             claimed_condition=claim.condition if claim else None,
             commit=commit,
             sub_game_number=self.sub_game_number,
+            smell_grid=smell_grid,
         )
         self._transition(Phase.AWAITING_REVEAL)
         await self._send_and_resolve(request, claim)
