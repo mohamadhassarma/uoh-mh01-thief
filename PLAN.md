@@ -9,7 +9,7 @@ moment confined to the most recently added layer.
 |---|-------|-----|--------|
 | 1 | Base game logic (single process, local board) | `prd/PRD-01-base-logic.md` | Done |
 | 2 | Basic FastMCP infrastructure over localhost | `prd/PRD-02-mcp-infra.md` | Done |
-| 3 | Commit-Reveal integrity (SHA-256) + audit log | `prd/PRD-03-commit-reveal.md` | Not started |
+| 3 | Commit-Reveal integrity (SHA-256) + audit log | `prd/PRD-03-commit-reveal.md` | Implementation done, not committed |
 | 4 | Pheromones, scent field, belief map | `prd/PRD-04-belief.md` | Not started |
 | 5 | Strategy brain + verbal layer (LLM) | `prd/PRD-05-strategy.md` | Not started |
 | 6 | GUI + Replay viewer | `prd/PRD-06-gui-replay.md` | Not started |
@@ -51,3 +51,28 @@ scaffold's demo value `1` to the book-mandated `6`, effective immediately
 (it is a signed value, not stage-gated) — see TODO.md "Blocked / needs
 negotiation": this must still be re-agreed byte-for-byte with any opponent
 group before a real series.
+
+## Role alternation — the engineering answer (stage 3, PRD-03)
+
+TODO.md's open question about role alternation had two genuinely separate
+parts that were conflated in early planning; stage 3 answers one of them
+concretely and leaves the other open:
+
+- **How role alternation works mechanically, once a series is running** —
+  now implemented and stress-tested (`infra/series.py::run_series`): ONE
+  long-lived process (`SeriesRuntime`, one FastMCP server for the whole
+  series) plays all `num_games` sub-games back to back, with `PeerRuntime`
+  constructed fresh per sub-game and handed `natural_role` on odd sub-games
+  / the swapped role on even ones. This is settled engineering, not a
+  negotiation item — it is purely how *this repo's own process* behaves
+  once launched.
+- **Which of our two repos (police, thief) is the thing that actually gets
+  launched for a given sub-game, in a real counted series against another
+  group** — still genuinely open, and still belongs to the professor, not a
+  guess. See TODO.md "Open questions for the professor" — the interop kit's
+  own completed-campaign playbook assumes a single codebase that can play
+  either role via a flag, which does not map cleanly onto this course's
+  mandatory two-separate-repos submission structure. Stage 3 does not
+  resolve this; it only means that *whichever* repo/process is chosen for a
+  given sub-game, that process's own role-alternation behavior across the
+  series it plays is now implemented and correct.

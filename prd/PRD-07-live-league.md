@@ -94,6 +94,40 @@ friendly and never a partially-failed one.
   team cannot know the opponent's count, which is not the same claim as
   `0`.
 
+- **Game-Count Declaration (book ch.9.2.1, "הצהרת מספר המשחקים" / "Game-Count
+  Declaration", p. 70) — verified directly against the PDF.** At the *start*
+  of every game, each team declares to its opponent how many counted games
+  it has already played so far; the diversity-incentive weighting is set
+  from these mutual declarations. The book is explicit that this is not a
+  trust-based mechanism: at the end of every legal game both teams already
+  mail the lecturer a game summary (§9), so at any moment the lecturer
+  independently knows exactly how many counted games each team has actually
+  played — a false declaration caught during grading disqualifies the team
+  that lied. The minimum-to-pass threshold is a successful run against at
+  least `[min_games_to_pass]` *different* teams; the count is also capped
+  from above at `[max_games_per_team]` counted games per team, to keep the
+  league balanced. Not yet implemented (this belongs at the negotiate-time
+  layer once the counted-games ledger below exists to answer "how many
+  counted games have I actually played" truthfully — it cannot be built
+  before that ledger is).
+
+  **On the "test"/"warmup" `game_id` prefix idea specifically:** a full
+  keyword search of the book PDF for warm-up/friendly/game-count material
+  found the paragraph above and the existing "warm-ups are unreported"
+  rule (below), but **no textual support for any `game_id`/`game_uid`
+  naming *prefix* convention** (e.g. a `test-` or `warmup-` string
+  segment) distinguishing friendly from counted games by construction. The
+  book's actual mechanism for this distinction is behavioural, not
+  lexical: a warm-up is simply a game whose end-of-game report is never
+  sent to the lecturer at all (see below) — nothing in `game_id`'s own
+  derivation (PRD-03's `derive_game_ids`, hashed from the negotiated terms
+  and the two group names) changes between a friendly and a counted game.
+  If a prefix convention is wanted for local bookkeeping (e.g. to keep
+  warm-up log files visually distinct on disk), it would be this project's
+  own invented convention, not a book requirement — flagged here rather
+  than silently added, since a chatbot-sourced claim should not be
+  implemented as if it were binding without this kind of check.
+
 - **Friendlies-before-counted-game discipline.** Only the **first** meeting
   between two groups counts (App. E rule 52); warm-ups are explicitly
   permitted and recommended (book ch.9.2.1) and owe **no report to

@@ -1,0 +1,128 @@
+"""The `selftest` and `peer` CLI command bodies. Split out of __main__.py
+purely to keep that file under the project's ~150-line budget.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import random
+import sys
+from pathlib import Path
+
+from .domain.config import ConfigError, load_config
+from .domain.match import FIRST_MOVER, MatchResult, UndefinedOutcomeError, run_match
+from .domain.state import Side
+from .domain.strategies import make_random_strategy
+from .shared.peer_config import PeerConfigError, load_peer_config
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "game.json"
+
+
+def _format_log(result: MatchResult) -> str:
+    lines = []
+    for entry in result.final_state.move_log:
+        capture_note = ""
+        if entry.capture_triggered:
+            claim = "claimed by police" if entry.capture_claimed_by_police else "detected, unclaimed"
+            capture_note = f"  <-- CAPTURE ({claim})"
+        lines.append(
+            f"  turn {entry.turn_number:>3} | {entry.actor.value:<6} | {entry.action_type.value:<7} "
+            f"{entry.detail:<6} | cop={entry.resulting_cop_pos} thief={entry.resulting_thief_pos}{capture_note}"
+        )
+    return "\n".join(lines)
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+    rng = random.Random(args.seed)
+    police_strategy = make_random_strategy(rng)
+    thief_strategy = make_random_strategy(rng)
+
+    print(f"Loaded config from: {args.config}")
+    print(f"grid_size={config.board.grid_size} cop_start={config.board.cop_start} "
+          f"thief_start={config.board.thief_start} first_mover={FIRST_MOVER.value} seed={args.seed}\n")
+
+    try:
+        result = run_match(config, police_strategy, thief_strategy)
+    except UndefinedOutcomeError as exc:
+        print("Match ended in an UNDEFINED state (not a crash — a known open rules question):")
+        print(f"  {exc}\n")
+        print("Move log up to that point:")
+        # UndefinedOutcomeError carries no state; re-run is not attempted here
+        # because move selection is randomized. See PRD-01 "Open questions".
+        return 1
+
+    print("Move log:")
+    print(_format_log(result))
+    print()
+    print(f"Terminal condition: {result.terminal_condition.value}")
+    if result.offending_side is not None:
+        print(f"Offending side: {result.offending_side.value}")
+    print(f"Final score — police: {result.police_score}, thief: {result.thief_score}")
+    return 0
+
+
+def cmd_peer(args: argparse.Namespace) -> int:
+    role = Side(args.role)
+    toml_path = args.peer_config or (REPO_ROOT / "config" / role.value / "game.toml")
+
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        peer_config = load_peer_config(role.value, toml_path, args.config)
+    except PeerConfigError as exc:
+        print(f"peer config error: {exc}", file=sys.stderr)
+        return 2
+
+    strategy = make_random_strategy(random.Random(args.seed))
+
+    print(f"Role:            {role.value}")
+    print(f"Group:           {peer_config.group_name} ({peer_config.group_id})")
+    print(f"Listening on:    127.0.0.1:{peer_config.my_port}")
+    print(f"Opponent URL:    {peer_config.opponent_url}")
+    print(f"First mover:     {FIRST_MOVER.value}")
+    print(f"response_timeout_sec={config.network.response_timeout_sec} "
+          f"watchdog_timeout_sec={config.network.watchdog_timeout_sec} "
+          f"turn_timeout_seconds={peer_config.turn_timeout_seconds}")
+    print("Waiting for opponent..." if role is not FIRST_MOVER else "Starting — I move first.")
+    print()
+
+    out_dir = args.log_dir or (REPO_ROOT / "logs")
+
+    from .infra.negotiation import NegotiationRefusedError
+    from .infra.series import run_series
+
+    print(f"Playing a {config.network.num_games}-sub-game series, role alternating (natural role: {role.value})...")
+    print()
+
+    try:
+        summaries = asyncio.run(run_series(role, config, peer_config, strategy=strategy, out_dir=str(out_dir)))
+    except NegotiationRefusedError as exc:
+        print("Handshake REFUSED — the series never started playing:")
+        print(f"  {exc}")
+        return 2
+
+    for summary in summaries:
+        print(f"--- Sub-game {summary['sub_game_number']} (playing {summary['role']}) ---")
+        if "undefined_outcome" in summary:
+            print(f"  UNDEFINED: {summary['undefined_outcome']}")
+        elif "disputed" in summary:
+            print(f"  DISPUTED: mine={summary['disputed']['mine']!r} theirs={summary['disputed']['theirs']!r}")
+        else:
+            print(f"  Terminal condition: {summary['terminal_condition']}")
+            print(f"  Score — police: {summary['police_score']}, thief: {summary['thief_score']}")
+        print(f"  Audit of me by opponent: {summary['audit_of_me_by_opponent']}")
+        print(f"  Audit of opponent by me: {summary['audit_of_opponent_by_me']}")
+    print(f"\nArtifacts written to: {out_dir}")
+    return 0

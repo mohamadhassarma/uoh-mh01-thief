@@ -3,9 +3,8 @@ import pytest
 from uoh_mh01.domain.board import Direction, Position
 from uoh_mh01.domain.match import BarrierAction, MoveAction
 from uoh_mh01.domain.state import Side
-from uoh_mh01.infra.protocol import (
-    MoveRequest,
-    ProtocolError,
+from uoh_mh01.infra.protocol import MoveRequest, ProtocolError
+from uoh_mh01.infra.protocol_builders import (
     action_to_request,
     declare_terminal_request,
     parse_move_request,

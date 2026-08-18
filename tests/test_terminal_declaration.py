@@ -10,7 +10,7 @@ import dataclasses
 from uoh_mh01.domain.board import Direction, Position
 from uoh_mh01.domain.match import MoveAction
 from uoh_mh01.domain.state import Side
-from uoh_mh01.infra.protocol import action_to_request, declare_terminal_request
+from uoh_mh01.infra.protocol_builders import action_to_request, declare_terminal_request
 from uoh_mh01.orchestrator import PeerRuntime
 from uoh_mh01.shared.peer_config import PeerConfig
 

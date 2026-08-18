@@ -89,6 +89,52 @@
 - [x] 165/165 tests pass (up from 163); `ruff` still clean against the reference-aligned
       rule set (same 6 pre-existing findings, none new).
 
+## Now (Stage 3: commit-reveal, handshake, audit, artifacts, series) — implementation done, not yet committed
+- [x] `domain/canonical.py`, `domain/crypto.py`, `domain/game_ids.py` — canonical JSON,
+      commit-reveal (`SHA256(canonical_json(payload)+"|"+nonce)`), `game_id`/`game_uid`
+      derivation. All four relevant interop-kit CORE vectors (canonical_json,
+      commit_reveal, terms_signature, game_uid) ported as data-only fixtures and
+      reproduced byte-for-byte (`tests/test_vectors.py`).
+- [x] Capture-symmetry superseded: capture-by-landing is now gated on `actor is
+      Side.POLICE`; a thief walking onto the police is an ordinary move. New negotiable
+      house rule `CAPTURE_CLAIM_MECHANIC` signed into `terms` alongside `FIRST_MOVER`.
+      See PRD-01 "Open questions" #4 and PRD-03.
+- [x] Pre-game handshake (`infra/negotiation.py`): mutual signed `terms`, `game_id`/
+      `game_uid` derived from the flat negotiated terms (never the whole config), refuse
+      on any mismatch (terms, signature, sub_game_number, role, pheromone-model hash).
+- [x] Pheromone/scent-model hash exchanged in `negotiate`'s EXTRAS (never inside signed
+      `terms`) via `shared/locked_model.py` — book's ch.4 multiplicative formula recorded
+      and hashed now, actual model deferred to PRD-04.
+- [x] Real per-turn commit-reveal wired into the existing turn loop (stage 2's unhashed
+      placeholders deleted outright), plus the mutual post-sub-game audit
+      (`infra/audit.py`) that re-hashes against what was *received live*, never against a
+      copy the revealer could rewrite after the fact.
+- [x] Three of the four standardized JSON artifacts (`declaration` once per series,
+      `config`/`log` once per sub-game) — `infra/artifacts.py`. The fourth (`result`) is
+      PRD-07's.
+- [x] `num_games`-sub-game series loop with role alternation (odd=natural, even=swapped)
+      over ONE long-lived FastMCP server per process for the whole series
+      (`infra/series_runtime.py::SeriesRuntime`, `infra/series.py::run_series`).
+- [x] Found and fixed four real concurrency bugs surfaced by real dual-subprocess stress
+      testing (missing retry on the audit-reveal call; cross-sub-game audit
+      misattribution; a submit_move startup race between sub-games; and, found in a
+      later stress batch, `SeriesRuntime`'s audit state being tracked in a single
+      "current" slot instead of keyed per sub-game, which could both wrongly time out a
+      still-in-flight audit from the previous sub-game and, worse, cross-contaminate the
+      next sub-game's result). Full debugging history in PRD-03's "Work in progress"
+      section. 15/15 and 20/20 clean stress-test batches after the final fix.
+- [x] Commit-reveal preimage: the book's own ch.5.3 printed listing (nonce inside the
+      object, no `ensure_ascii=False`) was verified directly against the PDF and found to
+      contradict the reference/interop-kit form already implemented. Kept the
+      reference/kit form as a documented, reasoned deviation — see PRD-03's "Commit
+      preimage" section for the full side-by-side citation (book clarification page,
+      ch.5.3 listing as printed, chosen construction, reasoning).
+- [ ] Not yet done this round: PRD-03/PRD-07's own coverage/ruff/line-budget recheck
+      against the new files; a transcript at the real contract's `num_games=6`/
+      `max_moves=35`/`survival_threshold=35` values (the stress-tested integration test
+      uses shrunk values for speed); mirroring anything to the thief repo (deliberately
+      deferred — this stage was police-repo-only throughout, per instruction).
+
 ## Blocked / needs negotiation with opponent group
 - [ ] Agree `config/game.json` byte-for-byte with opponent group — **now includes the
       `num_games: 1 -> 6` change**; must be re-verified byte-identical with the thief
@@ -98,12 +144,35 @@
 - [ ] Agree `map_area` and `hint_max_words`
 - [ ] Agree the counting basis for `max_moves` (per-player vs combined) — see
       PRD-01 "Open questions"; this engine currently assumes per-player
-- [ ] Agree who moves first (`FIRST_MOVER`) — see PRD-01 "Open questions"
-- [ ] Find or agree a trigger condition for `tie_score` — none is implemented
-- [ ] Agree the commit-reveal preimage form (PRD-03): this engine will adopt the
-      reference's `SHA256(canonical(payload)|nonce)`, one of three inconsistent forms
-      the v3.0.0 release itself publishes — see PRD-03's "three-competing-constructions"
-      section. A mismatched opponent form voids every audit.
+- [ ] Agree who moves first (`FIRST_MOVER`) — see PRD-01 "Open questions". Now a
+      signed handshake term (`shared/terms.py`), so a mismatched opponent refuses
+      cleanly instead of disagreeing mid-match.
+- [x] Trigger condition for `tie_score` — found (book ch.9 "Tie Rule", App. F table 17
+      row 5): fires on the *cumulative score across a whole series* between a pair of
+      teams, not per sub-game. See PRD-01 "Open questions" #6 and PRD-07's "tie-rule
+      contradiction" (book/reference disagree on the mechanics of applying it —
+      `series_add` is this project's documented choice, still MUST-AGREE with any
+      opponent before a real series ties).
+- [ ] **MUST-AGREE — agree the commit-reveal preimage form (PRD-03).** This engine
+      adopts the reference/interop-kit form,
+      `SHA256(canonical_json(payload)+"|"+nonce)` with `ensure_ascii=False`, as a
+      documented, reasoned deviation from the book's own ch.5.3 printed listing (which
+      puts the nonce inside the object and omits `ensure_ascii=False`) — see PRD-03's
+      "Commit preimage" section for the full citation (book clarification page, listing
+      as printed, chosen construction, reasoning, side by side). Any opponent group
+      implementing verbatim from the printed listing fails our audit and we fail
+      theirs, on the very first revealed step, before any counted game.
+- [ ] **MUST-AGREE — agree the capture-claim mechanic (PRD-01 #4 / PRD-03).** Capture-
+      by-landing is now police-turn-gated (`CAPTURE_CLAIM_MECHANIC =
+      "police_turn_gated_claim"`, signed into `terms`): a thief walking onto the police
+      is an ordinary move, and the police may claim a prior co-location via STAY on its
+      own later turn. This is a signed handshake term, so an opponent whose own
+      implementation names a *different* value for the same key refuses cleanly at
+      negotiation — but only if their implementation exposes this as a comparable named
+      value at all. An opponent built straight from the book's literal "police lands on
+      thief's cell" text, with no equivalent concept in its own terms schema, may not
+      produce a clean refusal — this still needs explicit human confirmation before a
+      counted game, not reliance on the handshake alone to catch it.
 - [ ] Agree the series tie-rule behaviour (PRD-07): `series_add` (this project's
       documented choice) vs `series_replace` vs `per_subgame` (the reference's own) —
       invisible until a real series ties, then a scoring contradiction under rule 35.
@@ -111,9 +180,15 @@
       lock — the interop kit documents two conformant peers deadlocking despite a fully
       matching handshake because turn order was never actually pinned by any hash
       (SPEC §7, "What the wire_shape lock does not cover").
-- [ ] Role-alternation convention for a `num_games`-sub-game series (odd/even swap) —
+- [ ] Role-alternation convention for a `num_games`-sub-game series (odd=natural,
+      even=swapped) — the mechanics of alternating role *within a running series* are
+      now implemented and stress-tested (`infra/series.py`; see PLAN.md "Role
+      alternation — the engineering answer"), but the convention itself (odd/even, not
+      e.g. alternating every other pair, or by explicit per-sub-game declaration) still
       needs explicit confirmation with the opponent group, not just this repo's own
-      reading of the reference/book.
+      reading of the reference/book. Separately, and still unresolved: which of our two
+      *repos* gets launched for a given sub-game in a real counted series — see "Open
+      questions for the professor" below, unchanged by this stage's work.
 
 ## Known limitations
 - [ ] `axis_origin_corner` and `axis_start_index` are negotiable per the
@@ -142,13 +217,28 @@
       Not fixed this round: touches five files' enum semantics for a stylistic
       preference, carries a small non-zero behavioural-change risk (`str()` on a
       `StrEnum` member differs from `str, Enum`'s default), and wasn't asked for.
-- [ ] The interop kit's test vectors (`vectors/canonical_json.json`,
-      `commit_reveal.json`, `terms_signature.json`, `game_uid.json`, …) have NOT yet
-      been ported into this repo's test suite — that is stage-3 implementation work
-      (PRD-03 depends on it), not done in this documentation/corrections round.
-- [ ] PRD-03 and PRD-07 are design documents only as of this round — no handshake, no
-      real commit-reveal, no series loop, no `result_<game_id>.json`, no Gmail/tunnel
-      code exists yet. Implementing them is future work.
+- [x] The interop kit's four CORE test vectors (`canonical_json.json`,
+      `commit_reveal.json`, `terms_signature.json`, `game_uid.json`) are now ported
+      into `tests/fixtures/vectors/` (data only, no kit code) and all reproduce
+      byte-for-byte (`tests/test_vectors.py`).
+- [ ] PRD-07 remains a design document only — no `result_<game_id>.json`, consensus
+      signature, diversity reward, counted-games ledger, Gatekeeper, or Gmail/tunnel
+      code exists yet. PRD-03, by contrast, is now substantially implemented (real
+      handshake, real per-turn commit-reveal, mutual audit, three of the four
+      standardized artifacts, the `num_games`-sub-game series loop) — not committed yet,
+      see PRD-03's "Work in progress" section for exact status.
+- [x] FIXED: `_handle_move_or_barrier`'s at-least-once-delivery handling. A field-
+      observed asymmetric-outcome bug (one side's log read `technical_loss`, the
+      other's read `survival` for the SAME sub-game) was traced to exactly the
+      predicted mechanism: a retried commit re-evaluated against advanced state
+      instead of deduplicated, plus a timing-out side never rejecting a genuinely-
+      new message that arrived after it had already self-finished. Fixed via
+      commit-keyed idempotent response replay (`PeerRuntime._replayed_responses`)
+      and post-finish rejection — see PRD-03 "Symmetric timeout outcomes" for the
+      full root-cause trace, the fix, and the one residual (non-scoring) divergence
+      left deliberately unresolved. `tests/test_symmetric_timeouts.py` covers it,
+      including a real end-to-end reproduction at the unmodified `config/game.json`
+      contract values (no shrunk timeouts).
 
 ## Open questions for the professor (recorded, NOT answered by guessing)
 

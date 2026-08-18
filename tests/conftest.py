@@ -25,6 +25,10 @@ def make_raw_config(
     technical_loss: int = 0,
     response_timeout_sec: float = 30,
     watchdog_timeout_sec: float = 60,
+    num_games: int = 6,
+    pheromone_center_intensity: float = 0.9,
+    pheromone_decay: float = 0.1,
+    pheromone_grid_size: int = 5,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.2",
@@ -52,9 +56,15 @@ def make_raw_config(
             "tie_score": tie_score,
             "technical_loss": technical_loss,
         },
+        "pheromones": {
+            "pheromone_center_intensity": pheromone_center_intensity,
+            "pheromone_decay": pheromone_decay,
+            "pheromone_grid_size": pheromone_grid_size,
+        },
         "network_and_league": {
             "response_timeout_sec": response_timeout_sec,
             "watchdog_timeout_sec": watchdog_timeout_sec,
+            "num_games": num_games,
         },
     }
 
