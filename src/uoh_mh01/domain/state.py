@@ -12,14 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from .board import Board, Direction, Position
-from .config import GameConfig, MovementConfig
-from .rules import (
-    destination_of,
-    is_barrier_placement_legal,
-    is_capture_state,
-    is_move_legal,
-)
+from .board import Board, Position
+from .config import GameConfig
 
 
 class Side(str, Enum):
@@ -98,83 +92,6 @@ class MatchState:
             thief_actions_taken=0,
             move_log=(),
         )
-
-
-def apply_move(state: MatchState, direction: Direction) -> MatchState:
-    """Apply a move for whichever side has the turn. Raises IllegalActionError
-    if the move is not legal — callers (match.py) turn that into TECHNICAL_LOSS.
-    """
-    actor = state.whose_turn
-    movement: MovementConfig = state.config.movement
-    pos = state.cop_pos if actor is Side.POLICE else state.thief_pos
-
-    if not is_move_legal(state.board, pos, direction, movement):
-        raise IllegalActionError(actor, f"{actor.value} attempted illegal move {direction.value} from {pos}")
-
-    dest = destination_of(pos, direction)
-    new_cop_pos = dest if actor is Side.POLICE else state.cop_pos
-    new_thief_pos = dest if actor is Side.THIEF else state.thief_pos
-
-    captured = is_capture_state(new_cop_pos, new_thief_pos)
-    # Only the police's own landing counts as a declared claim (the
-    # rulebook's Capture Claim mechanism is police-only). If the thief walks
-    # onto the police, the overlap is still detected and still a capture, but
-    # there is no claim to log — see rules.is_capture_state's docstring.
-    claimed = captured and actor is Side.POLICE
-
-    entry = LogEntry(
-        turn_number=state.turn_number,
-        actor=actor,
-        action_type=ActionType.MOVE,
-        detail=direction.value,
-        resulting_cop_pos=new_cop_pos,
-        resulting_thief_pos=new_thief_pos,
-        capture_triggered=captured,
-        capture_claimed_by_police=claimed,
-    )
-
-    return replace(
-        state,
-        cop_pos=new_cop_pos,
-        thief_pos=new_thief_pos,
-        thief_survived_steps=state.thief_survived_steps + (1 if actor is Side.THIEF and not captured else 0),
-        police_actions_taken=state.police_actions_taken + (1 if actor is Side.POLICE else 0),
-        thief_actions_taken=state.thief_actions_taken + (1 if actor is Side.THIEF else 0),
-        move_log=state.move_log + (entry,),
-    )
-
-
-def apply_barrier(state: MatchState, target: Position) -> MatchState:
-    """Apply a police barrier placement. Raises IllegalActionError if illegal."""
-    actor = state.whose_turn
-    if actor is not Side.POLICE:
-        raise IllegalActionError(actor, "only the police may place barriers")
-
-    movement: MovementConfig = state.config.movement
-    if not is_barrier_placement_legal(state.board, state.cop_pos, target, state.barriers_placed, movement):
-        raise IllegalActionError(actor, f"police attempted illegal barrier placement at {target}")
-
-    new_board = state.board.with_barrier(target)
-    captured = target == state.thief_pos  # capture-by-barrier
-
-    entry = LogEntry(
-        turn_number=state.turn_number,
-        actor=actor,
-        action_type=ActionType.BARRIER,
-        detail=f"({target.row},{target.col})",
-        resulting_cop_pos=state.cop_pos,
-        resulting_thief_pos=state.thief_pos,
-        capture_triggered=captured,
-        capture_claimed_by_police=captured,
-    )
-
-    return replace(
-        state,
-        board=new_board,
-        barriers_placed=state.barriers_placed + 1,
-        police_actions_taken=state.police_actions_taken + 1,  # only police can place barriers
-        move_log=state.move_log + (entry,),
-    )
 
 
 def next_turn(state: MatchState, first_mover: Side) -> MatchState:

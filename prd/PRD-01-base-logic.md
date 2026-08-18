@@ -68,7 +68,9 @@ strategy brain and the LLM trash-talk layer (stage 5), GUI and replay viewer
 
 ## Terminal conditions
 
-1. **Capture by landing** — the two agents' coordinates coincide after a move.
+1. **Capture by landing** — the two agents' coordinates coincide after a
+   **police** move (a thief moving onto the police is an ordinary,
+   uncaptured move — see "Open questions" #4, superseded in stage 3/PRD-03).
    Scores `capture_cop` / `capture_thief`.
 2. **Capture by barrier** — a barrier is placed exactly on the thief's current
    cell. Same scoring, in the same moment.
@@ -168,6 +170,26 @@ guessed silently. All are on the agenda for opponent-group negotiation before
    ships with. See `test_max_moves_...` in `tests/test_match.py` for the
    regression coverage.
 
+   **Stage-3 book re-verification (this session):** the book PDF was
+   re-checked directly for (a) any explicit statement of the `max_moves`
+   counting basis and (b) a course-chatbot claim that reaching the
+   `max_moves` ceiling should auto-resolve to a thief survival win. Neither
+   holds up. The conceptual score table (Table 2, ch.2, p. 38) lists exactly
+   the terminal conditions already implemented here — capture, extended
+   survival ("הישרדות ממושכת" — the thief survives `[survival_threshold]`
+   valid steps without capture), and technical loss (0/0) — with no row and
+   no surrounding text for a `max_moves`-ceiling-as-automatic-outcome. The
+   sample `config/game.json` listing in Appendix B (p. 129) confirms the
+   field names and defaults already implemented (`max_moves: 35`,
+   `survival_threshold: 35`) but states no counting-basis rule beyond "the
+   field names are fixed and binding; values are negotiable in the strict
+   direction for minimum-type parameters." The decision above — per-player
+   counting, `UndefinedOutcomeError` on an unresolved ceiling, no invented
+   auto-survival-win — stands as originally reasoned; it is not contradicted
+   by anything found in the book, and no book text was found that would
+   resolve it more definitively one way or the other. It remains a
+   negotiation-agenda item, not a book-settled question.
+
 3. **What happens when `max_moves` is reached with nothing else having
    fired.** Not defined anywhere in the rulebook. The engine deliberately does
    **not** resolve this to a tie, a technical loss, or anything else — it
@@ -185,22 +207,51 @@ guessed silently. All are on the agenda for opponent-group negotiation before
    one of these two numbers needs to understand it can silently resurrect
    this code path.
 
-4. **Capture symmetry.** Rule text literally describes only "the police lands
-   on the thief's cell." The PRD/TODO stubs more generically say "capture by
-   coordinate overlap." Resolved as: **any** coordinate overlap after either
+4. **Capture symmetry — SUPERSEDED in stage 3, see below.** Rule text
+   literally describes only "the police lands on the thief's cell." The
+   PRD/TODO stubs more generically say "capture by coordinate overlap."
+   Originally (stage 1) resolved as: **any** coordinate overlap after either
    side's move is a capture, regardless of who moved onto whom — otherwise a
    legal, permanent same-cell state would exist that no later stage (belief
-   map, replay, audit log) could sensibly model. This is an engineering
-   judgement call, not a rulebook requirement, and is flagged as provisional.
+   map, replay, audit log) could sensibly model. This was an engineering
+   judgement call, not a rulebook requirement, and was flagged as
+   provisional from the start.
 
-   A secondary distinction was preserved deliberately: capture *detection*
-   (`rules.is_capture_state`, symmetric, pure) is kept separate from a
-   capture *claim* (`LogEntry.capture_claimed_by_police`, set only when the
-   police's own move or barrier produced the overlap). The rulebook's
-   Commit-Reveal mechanism (stage 3) gives the police — and only the police —
-   a cryptographic duty to truthfully claim a capture; there is no equivalent
-   mechanism for the thief. Collapsing detection and claim into one concept
-   now would make stage 3 harder to build correctly later.
+   A secondary distinction was preserved deliberately from the start: capture
+   *detection* (`rules.is_capture_state`, symmetric, pure) is kept separate
+   from a capture *claim* (`LogEntry.capture_claimed_by_police`, set only
+   when the police's own move or barrier produced the overlap). The
+   rulebook's Commit-Reveal mechanism (stage 3) gives the police — and only
+   the police — a cryptographic duty to truthfully claim a capture; there is
+   no equivalent mechanism for the thief. Collapsing detection and claim
+   into one concept from the start would have made stage 3 harder to build
+   correctly.
+
+   **Stage-3 supersession (PRD-03):** that separation turned out to matter
+   for exactly the reason anticipated. The stage-1 "any overlap is a
+   capture" rule made the thief walking onto the police's cell an automatic
+   capture too — but the book gives only the police a cryptographic duty to
+   claim, so a thief-caused overlap had no mechanism to ever be *claimed* by
+   anyone, and the original symmetric-detection code would have force-ended
+   the match on it anyway with no compatible commit-reveal story. Resolved
+   in stage 3 as: capture-by-landing is now gated on `actor is Side.POLICE`
+   at the moment of the state transition
+   (`domain/state.py::apply_move`/`apply_barrier`) — a thief moving onto the
+   police is an ordinary, uncaptured, legal move producing a persistent
+   same-cell state, exactly like any other board position. The police may
+   still claim that co-location on its own subsequent turn via `STAY` (which
+   falls out naturally from `apply_move`'s existing zero-delta handling,
+   gated by the same actor-is-police check) — or choose not to, and let the
+   thief walk away. `CAPTURE_CLAIM_MECHANIC =
+   "police_turn_gated_claim"` (`domain/match.py`) is a new negotiable house
+   rule, signed into the handshake `terms` alongside `FIRST_MOVER` (see
+   PRD-03 "The pre-game handshake"), so a mismatched opponent implementation
+   refuses the match instead of silently disagreeing on this mid-series.
+   `rules.is_capture_state` itself is unchanged (still the symmetric,
+   coordinate-overlap predicate) — only its *caller* is now gated; see
+   PRD-03 for the implementation and `tests/test_state.py` for the coverage
+   (thief-onto-police is not a capture; police may claim a prior
+   co-location via STAY; police may instead let the thief walk away).
 
 5. **Entrapment vs. STAY.** STAY is always a legal move in isolation, which
    would make entrapment unreachable if it counted as an escape. Resolved by
@@ -209,13 +260,22 @@ guessed silently. All are on the agenda for opponent-group negotiation before
    of whether STAY is separately legal. Not flagged as provisional; this
    reading is what the rule text already says, not a judgement call.
 
-6. **Tie trigger.** `tie_score` exists in the scoring table with no defined
-   trigger condition anywhere found in the rulebook excerpts available. Per
-   explicit instruction, no trigger was invented. `scoring.score_for` can
-   still produce a `(tie_score, tie_score)` pair on request
-   (`test_tie_is_reachable_and_scores_the_tie_pair`), but nothing in
-   `match.run_match` ever reaches it. Needs a rulebook citation or an
-   opponent-negotiated house rule before stage 2.
+6. **Tie trigger — since resolved, see PRD-07.** At stage 1, `tie_score`
+   existed in the scoring table with no trigger condition found anywhere in
+   the rulebook excerpts then available, so per explicit instruction none
+   was invented here. A trigger was subsequently found (book ch.9, "כלל
+   התיקו" / "Tie Rule", p. 71, App. F table 17 row 5): the tie fires on the
+   *cumulative score across an entire series* between one pair of teams, not
+   per sub-game — "if the accumulated score of all sub-games between a pair
+   of teams ends in a tie... each team receives `[tie_score]`." That is
+   league-aggregation territory (a single sub-game's own terminal conditions
+   never include a tie), so it is implemented in PRD-07 (`result_<game_id>
+   .json`'s `series_tie` field and the `series_add` resolution of a related
+   book/reference contradiction), not here. `scoring.score_for` can still
+   produce a `(tie_score, tie_score)` pair on request
+   (`test_tie_is_reachable_and_scores_the_tie_pair`), but nothing in this
+   stage's own `match.run_match` ever reaches it directly — by design, since
+   the trigger lives one layer up.
 
 7. **Axis orientation generality.** `axis_origin_corner` and
    `axis_start_index` are marked *negotiable* in the mandatory parameter

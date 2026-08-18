@@ -5,11 +5,7 @@ from uoh_mh01.domain.board import Direction
 from uoh_mh01.domain.match import MoveAction
 from uoh_mh01.domain.state import Side
 from uoh_mh01.infra.watchdog import OpponentUnresponsiveError
-from uoh_mh01.orchestrator import (
-    PeerRuntime,
-    _stage3_placeholder_commit,
-    _stage3_placeholder_verify,
-)
+from uoh_mh01.orchestrator import PeerRuntime
 from uoh_mh01.shared.peer_config import PeerConfig
 
 
@@ -24,16 +20,18 @@ def _peer_config(role: str = "police", my_port: int = 8801, opponent_port: int =
     )
 
 
-def test_stage3_placeholders_still_present():
-    # Guard test, per PRD-02: stage 3 must consciously remove these
-    # placeholders and replace them with real SHA-256 commit-reveal, not
-    # silently inherit them. If this test starts failing because the
-    # functions are gone, that IS the intended signal — delete this test
-    # alongside them once real crypto lands.
-    action = MoveAction(Direction.STAY)
-    commit = _stage3_placeholder_commit(action)
-    assert commit == {"unhashed_action": action}  # passed through UNHASHED, not a real hash
-    assert _stage3_placeholder_verify(commit, response=None) is True  # always verifies true
+def test_taking_my_turn_seals_a_real_commit_record(config_factory):
+    # PRD-03 acceptance criterion: the stage-2 placeholders are gone, real
+    # commit-reveal sealing happened instead. This does not need a network
+    # call — sealing happens locally before anything is sent.
+    from uoh_mh01.domain.crypto import verify
+
+    config = config_factory()
+    runtime = PeerRuntime(Side.POLICE, config, _peer_config(), strategy=lambda state, side: MoveAction(Direction.E))
+    record = runtime._seal_own_record(step=1, action_type="move", detail="E")
+    sealed = runtime.own_sealed_records[-1]
+    assert sealed["commit"] == record
+    assert verify(sealed["payload"], sealed["nonce"], sealed["commit"])
 
 
 async def test_silent_opponent_produces_technical_loss_not_a_hang(config_factory, monkeypatch):

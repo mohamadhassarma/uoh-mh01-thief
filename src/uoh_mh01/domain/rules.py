@@ -57,13 +57,16 @@ def is_barrier_placement_legal(
 
 
 def is_capture_state(cop_pos: Position, thief_pos: Position) -> bool:
-    """Symmetric coordinate-overlap check.
+    """Pure coordinate-overlap check — does NOT decide who a capture is
+    attributed to or whether it counts as claimed.
 
-    Deliberately does not care which side's move produced the overlap — see
-    PRD-01 "Open questions" for why this is a provisional, negotiable choice
-    rather than a rulebook requirement. Whether an overlap is also a *claimed*
-    capture (the police's declaration duty) is a separate concept — see
-    state.py's CaptureEvent.claimed_by_police.
+    PRD-03 (superseding PRD-01's original symmetric reading, verified
+    against the book's Table 2 and rules #21/#22): capture-by-landing is
+    police-turn-gated at the call site (state.apply_move) — this predicate
+    is only consulted when `actor is Side.POLICE`. A thief walking onto the
+    police's cell computes `True` here too (the coordinates DO overlap) but
+    the caller does not treat it as a capture; the two agents simply end up
+    co-located, a legal and persistent board state.
     """
     return cop_pos == thief_pos
 

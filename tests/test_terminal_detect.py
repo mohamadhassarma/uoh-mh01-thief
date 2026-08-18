@@ -1,8 +1,9 @@
 import dataclasses
 
 from uoh_mh01.domain.board import Direction, Position
+from uoh_mh01.domain.reducers import apply_move
 from uoh_mh01.domain.scoring import TerminalCondition
-from uoh_mh01.domain.state import MatchState, Side, apply_move
+from uoh_mh01.domain.state import MatchState, Side
 from uoh_mh01.domain.terminal_detect import (
     UNDEFINED_CEILING,
     detect_from_last_action,

@@ -43,9 +43,13 @@ source = ["src"]
 # implementation's own pyproject.toml omission list for the same reason.
 omit = [
     "*/__main__.py",
+    "*/cli_commands.py",
     "*/infra/mcp_server.py",
     "*/infra/mcp_client.py",
-    "*/infra/peer_entrypoint.py",
+    "*/infra/series.py",
+    "*/infra/series_subgame.py",
+    "*/infra/series_runtime.py",
+    "*/shared/build_commit.py",
 ]
 
 [tool.coverage.report]

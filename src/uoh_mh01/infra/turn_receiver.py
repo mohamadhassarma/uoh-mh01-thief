@@ -15,36 +15,20 @@ from __future__ import annotations
 import logging
 
 from ..domain.match import UndefinedOutcomeError
+from ..domain.reducers import apply_barrier, apply_move
 from ..domain.scoring import TerminalCondition, score_for
-from ..domain.state import (
-    IllegalActionError,
-    MatchState,
-    Side,
-    apply_barrier,
-    apply_move,
-    other_side,
-)
+from ..domain.sealed_payload import build_move_payload, state_str
+from ..domain.state import IllegalActionError, Side, other_side
 from ..domain.terminal_detect import detect_from_last_action, detect_pre_turn
 from .outcomes import DisputedOutcomeError
-from .protocol import MoveRequest, request_to_action
+from .protocol import MoveRequest
+from .protocol_builders import request_to_action
 from .protocol_response import MoveResponse, TerminalInfo
+from .receiver_helpers import counter_mismatch as _counter_mismatch
+from .receiver_helpers import early_response as _early_response
+from .receiver_helpers import sender_position as _sender_position
 
 logger = logging.getLogger(__name__)
-
-
-def _counter_mismatch(request: MoveRequest, expected: MatchState) -> str | None:
-    """B2: every message carries the sender's own post-action counters; the
-    receiver rejects any message whose counters don't match what its OWN
-    local state expects — the one place a lost/duplicated/reordered message
-    is caught rather than silently applied. See PRD-02 'Stage 2
-    corrections'."""
-    if request.police_actions_taken != expected.police_actions_taken or request.thief_actions_taken != expected.thief_actions_taken:
-        return (
-            f"counter mismatch: sender claims police={request.police_actions_taken} "
-            f"thief={request.thief_actions_taken}, my local state expects "
-            f"police={expected.police_actions_taken} thief={expected.thief_actions_taken}"
-        )
-    return None
 
 
 class _TurnReceiverMixin:
@@ -52,12 +36,19 @@ class _TurnReceiverMixin:
         self._in_flight += 1
         try:
             async with self._lock:
+                early = _early_response(self, request)
+                if early is not None:
+                    return early
                 sender = Side(request.role)
                 if sender is not other_side(self.role):
                     return MoveResponse(accepted=False, reason=f"unexpected sender role {request.role!r}")
                 if request.action_type == "declare_terminal":
-                    return self._handle_declare_terminal(sender, request)
-                return self._handle_move_or_barrier(sender, request)
+                    response = self._handle_declare_terminal(sender, request)
+                else:
+                    response = self._handle_move_or_barrier(sender, request)
+                if request.commit:
+                    self._replayed_responses[request.commit] = response
+                return response
         finally:
             self._in_flight -= 1
 
@@ -65,6 +56,18 @@ class _TurnReceiverMixin:
         mismatch = _counter_mismatch(request, self.state)
         if mismatch is not None:
             return MoveResponse(accepted=False, divergence=mismatch)
+
+        self.received_commits.record(
+            request.turn_number,
+            build_move_payload(
+                step=request.turn_number,
+                role=sender.value,
+                action_type="declare_terminal",
+                detail=request.claimed_condition or "",
+                state=state_str(self.state.board.grid_size, _sender_position(self.state, sender), self.state.board.barriers),
+            ),
+            request.commit,
+        )
 
         my_claim = detect_pre_turn(self.state, sender)
         my_condition = my_claim.condition if my_claim else None
@@ -99,6 +102,19 @@ class _TurnReceiverMixin:
         mismatch = _counter_mismatch(request, new_state)
         if mismatch is not None:
             return MoveResponse(accepted=False, divergence=mismatch)
+
+        entry = new_state.move_log[-1]
+        self.received_commits.record(
+            request.turn_number,
+            build_move_payload(
+                step=request.turn_number,
+                role=sender.value,
+                action_type=entry.action_type.value,
+                detail=entry.detail,
+                state=state_str(new_state.board.grid_size, _sender_position(new_state, sender), new_state.board.barriers),
+            ),
+            request.commit,
+        )
 
         claim = detect_from_last_action(new_state)
         my_condition = claim.condition if claim else None

@@ -158,7 +158,7 @@ def test_entrapment_by_board_corner(config):
 def test_barrier_on_thief_cell_is_a_legal_placement_not_rejected(config):
     # Barrier legality never looks at the thief's position at all — only cop
     # adjacency, in-bounds, and quota. Landing on the thief is what makes the
-    # placement a CAPTURE (see state.apply_barrier), not what makes it
+    # placement a CAPTURE (see reducers.apply_barrier), not what makes it
     # illegal. A naive implementation might reject this as "occupied."
     thief_pos = Position(2, 3)
     cop_pos = Position(2, 2)

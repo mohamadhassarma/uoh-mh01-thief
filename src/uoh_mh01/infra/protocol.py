@@ -30,10 +30,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..domain.board import Direction, Position
-from ..domain.match import Action, BarrierAction, MoveAction
-from ..domain.state import Side
-
 TOOL_NAME = "submit_move"
 
 _ACTION_TYPES = frozenset({"move", "barrier", "declare_terminal"})
@@ -64,6 +60,18 @@ class MoveRequest:
     # outright — the receiver always recomputes and reports agreement.
     claimed_condition: str | None = None
     claimed_offending_side: str | None = None
+    # PRD-03: the SHA-256 commit hash sealing this message's own payload
+    # (never the nonce — that stays secret until the post-sub-game mutual
+    # audit). Empty string for stage-2-only tests that don't exercise
+    # real crypto; a real peer always sends a non-empty commit.
+    commit: str = ""
+    # PRD-03: which sub-game of the series this move belongs to (interop kit
+    # SPEC §7.2's pairing-declaration pattern, applied here to submit_move
+    # too). The two peers' series loops are not perfectly wall-clock
+    # synchronized between sub-games — the receiver uses this to wait for
+    # (rather than misattribute to the wrong sub-game, or flatly reject) a
+    # message that legitimately arrived slightly early.
+    sub_game_number: int = 1
 
     def to_kwargs(self) -> dict[str, Any]:
         return {
@@ -77,104 +85,6 @@ class MoveRequest:
             "thief_actions_taken": self.thief_actions_taken,
             "claimed_condition": self.claimed_condition,
             "claimed_offending_side": self.claimed_offending_side,
+            "commit": self.commit,
+            "sub_game_number": self.sub_game_number,
         }
-
-
-def parse_move_request(
-    role: str,
-    turn_number: int,
-    action_type: str,
-    direction: str | None,
-    target_row: int | None,
-    target_col: int | None,
-    police_actions_taken: int = 0,
-    thief_actions_taken: int = 0,
-    claimed_condition: str | None = None,
-    claimed_offending_side: str | None = None,
-) -> MoveRequest:
-    if role not in ("police", "thief"):
-        raise ProtocolError(f"role must be 'police' or 'thief', got {role!r}")
-    if action_type not in _ACTION_TYPES:
-        raise ProtocolError(f"action_type must be one of {sorted(_ACTION_TYPES)}, got {action_type!r}")
-    if action_type == "move":
-        if direction is None:
-            raise ProtocolError("action_type='move' requires 'direction'")
-    elif action_type == "barrier":
-        if target_row is None or target_col is None:
-            raise ProtocolError("action_type='barrier' requires 'target_row' and 'target_col'")
-    else:  # declare_terminal
-        if claimed_condition is None:
-            raise ProtocolError("action_type='declare_terminal' requires 'claimed_condition'")
-    return MoveRequest(
-        role=role,
-        turn_number=turn_number,
-        action_type=action_type,
-        direction=direction,
-        target_row=target_row,
-        target_col=target_col,
-        police_actions_taken=police_actions_taken,
-        thief_actions_taken=thief_actions_taken,
-        claimed_condition=claimed_condition,
-        claimed_offending_side=claimed_offending_side,
-    )
-
-
-def action_to_request(
-    action: Action,
-    role: Side,
-    turn_number: int,
-    *,
-    police_actions_taken: int,
-    thief_actions_taken: int,
-    claimed_condition: str | None = None,
-) -> MoveRequest:
-    if isinstance(action, MoveAction):
-        base = {
-            "role": role.value,
-            "turn_number": turn_number,
-            "action_type": "move",
-            "direction": action.direction.value,
-        }
-    elif isinstance(action, BarrierAction):
-        base = {
-            "role": role.value,
-            "turn_number": turn_number,
-            "action_type": "barrier",
-            "target_row": action.target.row,
-            "target_col": action.target.col,
-        }
-    else:
-        raise ProtocolError(f"unknown action type: {action!r}")
-    return MoveRequest(
-        **base,
-        police_actions_taken=police_actions_taken,
-        thief_actions_taken=thief_actions_taken,
-        claimed_condition=claimed_condition,
-    )
-
-
-def declare_terminal_request(
-    role: Side,
-    turn_number: int,
-    claimed_condition: str,
-    *,
-    police_actions_taken: int,
-    thief_actions_taken: int,
-) -> MoveRequest:
-    """Build a no-move 'I detected a terminal condition' message — see the
-    module docstring for why this reuses MoveRequest's shape and why it is
-    named `declare_terminal`, not `concede`."""
-    return MoveRequest(
-        role=role.value,
-        turn_number=turn_number,
-        action_type="declare_terminal",
-        police_actions_taken=police_actions_taken,
-        thief_actions_taken=thief_actions_taken,
-        claimed_condition=claimed_condition,
-    )
-
-
-def request_to_action(request: MoveRequest) -> Action:
-    if request.action_type == "move":
-        return MoveAction(Direction(request.direction))
-    return BarrierAction(Position(request.target_row, request.target_col))

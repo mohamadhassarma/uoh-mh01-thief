@@ -3,16 +3,9 @@ import dataclasses
 import pytest
 
 from uoh_mh01.domain.board import Direction, Position
+from uoh_mh01.domain.reducers import apply_barrier, apply_move
 from uoh_mh01.domain.rules import is_move_legal
-from uoh_mh01.domain.state import (
-    ActionType,
-    IllegalActionError,
-    MatchState,
-    Side,
-    apply_barrier,
-    apply_move,
-    next_turn,
-)
+from uoh_mh01.domain.state import ActionType, IllegalActionError, MatchState, Side, next_turn
 
 
 def test_apply_move_updates_police_position(config):
@@ -105,14 +98,48 @@ def test_capture_by_police_landing_on_thief(config_factory):
     assert entry.capture_claimed_by_police
 
 
-def test_capture_by_thief_walking_onto_police_is_detected_but_unclaimed(config_factory):
+def test_thief_walking_onto_police_is_an_ordinary_move_not_a_capture(config_factory):
+    # PRD-03 (verified against the book's Table 2 + rules #21/#22, supersedes
+    # PRD-01's original symmetric reading): capture-by-landing is
+    # police-turn-gated. The thief walking onto the police's cell is an
+    # ORDINARY move — both agents end up legally co-located, and the match
+    # continues; it is NOT a capture just because the thief caused the
+    # overlap.
     config = config_factory(cop_start=(2, 2), thief_start=(2, 3))
     state = MatchState.initial(config, first_mover=Side.THIEF)
     state = apply_move(state, Direction.W)
     assert state.thief_pos == state.cop_pos == Position(2, 2)
     entry = state.move_log[-1]
-    assert entry.capture_triggered
+    assert not entry.capture_triggered
     assert not entry.capture_claimed_by_police
+
+
+def test_police_may_claim_a_thief_caused_co_location_on_its_own_next_turn_via_stay(config_factory):
+    # The police did not move onto the thief this turn — the thief walked
+    # onto the police on ITS turn (no capture, per the test above). On the
+    # police's OWN next turn, STAYing while still co-located IS a valid
+    # claim: capture triggers.
+    config = config_factory(cop_start=(2, 2), thief_start=(2, 3))
+    state = MatchState.initial(config, first_mover=Side.THIEF)
+    state = apply_move(state, Direction.W)  # thief -> co-located, no capture
+    state = next_turn(state, Side.THIEF)
+    state = apply_move(state, Direction.STAY)  # police claims from the same cell
+    entry = state.move_log[-1]
+    assert entry.capture_triggered
+    assert entry.capture_claimed_by_police
+
+
+def test_police_may_instead_let_a_co_located_thief_walk_away(config_factory):
+    # If the police does NOT claim (moves elsewhere instead of STAYing), the
+    # thief is free to walk away on its own next turn — no capture ever
+    # happened, and nothing about the earlier co-location lingers.
+    config = config_factory(grid_size=5, cop_start=(2, 2), thief_start=(2, 3))
+    state = MatchState.initial(config, first_mover=Side.THIEF)
+    state = apply_move(state, Direction.W)  # thief -> co-located, no capture
+    state = next_turn(state, Side.THIEF)
+    state = apply_move(state, Direction.N)  # police walks away instead of claiming
+    assert not state.move_log[-1].capture_triggered
+    assert state.cop_pos != state.thief_pos
 
 
 def test_barrier_on_thief_cell_resolves_as_capture_not_illegal_move(config_factory):
@@ -161,9 +188,19 @@ def test_thief_survived_steps_increments_only_on_thief_moves(config):
 
 def test_thief_survived_steps_does_not_increment_on_capture(config_factory):
     config = config_factory(cop_start=(2, 2), thief_start=(2, 3))
-    state = MatchState.initial(config, first_mover=Side.THIEF)
-    state = apply_move(state, Direction.W)  # thief walks onto cop -> capture
+    state = MatchState.initial(config, first_mover=Side.POLICE)
+    state = apply_move(state, Direction.E)  # police lands on thief -> capture, before the thief ever acts
     assert state.thief_survived_steps == 0
+
+
+def test_thief_survived_steps_increments_on_a_co_location_that_is_not_a_capture(config_factory):
+    # PRD-03: the thief walking onto the police is an ordinary, uncaptured
+    # move — it must still count toward the thief's own survived-steps
+    # budget like any other successful move.
+    config = config_factory(cop_start=(2, 2), thief_start=(2, 3))
+    state = MatchState.initial(config, first_mover=Side.THIEF)
+    state = apply_move(state, Direction.W)  # thief walks onto cop -> no capture
+    assert state.thief_survived_steps == 1
 
 
 def test_thief_survived_steps_counter_is_exact_around_the_threshold(config_factory):

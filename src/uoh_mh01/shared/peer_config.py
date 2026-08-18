@@ -12,13 +12,20 @@ from __future__ import annotations
 
 import json
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .peer_config_errors import PeerConfigError
+from .peer_config_validators import (
+    optional_str_dict,
+    optional_str_list,
+    require_positive_int,
+    require_positive_number,
+    require_str,
+)
 
-class PeerConfigError(Exception):
-    """Raised when config/<role>/game.toml is missing, malformed, or fails validation."""
+__all__ = ["PeerConfig", "PeerConfigError", "load_peer_config", "overlay_signed_contract", "parse_peer_config"]
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,11 @@ class PeerConfig:
     my_port: int
     opponent_url: str
     turn_timeout_seconds: float
+    # Identity fields for the step-0/declaration artifacts (PRD-03) — kept
+    # optional since not every test constructs a full identity, and
+    # TODO.md's admin checklist still has "fill team member IDs" open.
+    members: tuple[str, ...] = ()
+    repos: dict[str, str] = field(default_factory=dict)
 
 
 def _load_toml(path: str | Path) -> dict[str, Any]:
@@ -71,40 +83,6 @@ def overlay_signed_contract(private: dict[str, Any], signed: dict[str, Any]) -> 
     return merged
 
 
-def _require(d: dict[str, Any], path: str) -> Any:
-    """Fetch a dotted path (e.g. 'network.my_port'), failing loudly if any
-    segment is missing."""
-    node: Any = d
-    walked: list[str] = []
-    for segment in path.split("."):
-        walked.append(segment)
-        if not isinstance(node, dict) or segment not in node:
-            raise PeerConfigError(f"config/<role>/game.toml: missing required field '{'.'.join(walked)}'")
-        node = node[segment]
-    return node
-
-
-def _require_str(d: dict[str, Any], path: str) -> str:
-    value = _require(d, path)
-    if not isinstance(value, str) or not value:
-        raise PeerConfigError(f"config/<role>/game.toml: '{path}' must be a non-empty string, got {value!r}")
-    return value
-
-
-def _require_positive_int(d: dict[str, Any], path: str) -> int:
-    value = _require(d, path)
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise PeerConfigError(f"config/<role>/game.toml: '{path}' must be a positive integer, got {value!r}")
-    return value
-
-
-def _require_positive_number(d: dict[str, Any], path: str) -> float:
-    value = _require(d, path)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        raise PeerConfigError(f"config/<role>/game.toml: '{path}' must be a positive number, got {value!r}")
-    return value
-
-
 def parse_peer_config(role: str, private: dict[str, Any], signed: dict[str, Any]) -> PeerConfig:
     """Build a validated PeerConfig from already-parsed TOML/JSON dicts, with
     the signed contract's overlay rule applied first."""
@@ -112,11 +90,13 @@ def parse_peer_config(role: str, private: dict[str, Any], signed: dict[str, Any]
 
     return PeerConfig(
         role=role,
-        group_id=_require_str(effective, "game.group_id"),
-        group_name=_require_str(effective, "game.group_name"),
-        my_port=_require_positive_int(effective, "network.my_port"),
-        opponent_url=_require_str(effective, "network.opponent_url"),
-        turn_timeout_seconds=_require_positive_number(effective, "network.turn_timeout_seconds"),
+        group_id=require_str(effective, "game.group_id"),
+        group_name=require_str(effective, "game.group_name"),
+        my_port=require_positive_int(effective, "network.my_port"),
+        opponent_url=require_str(effective, "network.opponent_url"),
+        turn_timeout_seconds=require_positive_number(effective, "network.turn_timeout_seconds"),
+        members=optional_str_list(effective, "game.members"),
+        repos=optional_str_dict(effective, "game.repos"),
     )
 
 
