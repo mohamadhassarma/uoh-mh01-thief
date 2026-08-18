@@ -1,0 +1,28 @@
+version = "1.10"
+
+[game]
+group_name = "Hassarma-Agents"
+group_id = "uoh-mh01"
+sub_game_number = 1
+members = ["id-0000", "id-0000"]
+repos = { cop = "https://github.com/mohamadhassarma/uoh-mh01-police", thief = "https://github.com/mohamadhassarma/uoh-mh01-thief" }
+
+[network]
+my_port = 8802                              # MY MCP server port
+opponent_url = "http://127.0.0.1:8801/mcp" # the only thing I know about the opponent
+turn_timeout_seconds = 180
+
+# [strategy] -- optional: point at YOUR brain subclass (else the shipped heuristic runs)
+# thief_class = "uoh_mh01.strategy:MyThiefBrain"
+
+[trash_talk]
+# HOW the banter is produced. The MOVE is always pure Python.
+provider = "template"   # template (0 tokens, default) | ollama | claude_api | claude_cli
+
+[llm]
+model = "claude-opus-4-8[1m]"
+step_deadline_seconds = 30
+
+[email]
+recipient = "rmisegal+uoh26finalgame@gmail.com"
+mode = "draft"

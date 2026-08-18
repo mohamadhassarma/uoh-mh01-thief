@@ -1,0 +1,27 @@
+# ---- OAuth secrets: NEVER commit these (mandatory rules #39, #40) ----
+credentials.json
+token.json
+*.credentials.json
+*.token.json
+.env
+.env.*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Runtime artefacts ----
+logs/
+*.log
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
