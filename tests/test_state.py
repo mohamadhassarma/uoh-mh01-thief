@@ -4,7 +4,15 @@ import pytest
 
 from uoh_mh01.domain.board import Direction, Position
 from uoh_mh01.domain.rules import is_move_legal
-from uoh_mh01.domain.state import ActionType, IllegalActionError, MatchState, Side, apply_barrier, apply_move, next_turn
+from uoh_mh01.domain.state import (
+    ActionType,
+    IllegalActionError,
+    MatchState,
+    Side,
+    apply_barrier,
+    apply_move,
+    next_turn,
+)
 
 
 def test_apply_move_updates_police_position(config):

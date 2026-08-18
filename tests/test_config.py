@@ -13,6 +13,8 @@ def test_real_config_loads_and_validates():
     assert config.movement.max_barriers == 14
     assert config.movement.max_moves == 35
     assert config.movement.survival_threshold == 35
+    assert config.network.response_timeout_sec == 30
+    assert config.network.watchdog_timeout_sec == 60
     assert config.scoring.capture_cop == 20
     assert config.scoring.tie_score == 2
 
@@ -87,4 +89,18 @@ def test_negative_score_rejected():
     raw = make_raw_config()
     raw["scoring"]["capture_cop"] = -1
     with pytest.raises(ConfigError):
+        parse_config(raw)
+
+
+def test_missing_network_section_raises_clearly():
+    raw = make_raw_config()
+    del raw["network_and_league"]
+    with pytest.raises(ConfigError, match="network_and_league"):
+        parse_config(raw)
+
+
+def test_non_positive_response_timeout_rejected():
+    raw = make_raw_config()
+    raw["network_and_league"]["response_timeout_sec"] = 0
+    with pytest.raises(ConfigError, match="response_timeout_sec"):
         parse_config(raw)

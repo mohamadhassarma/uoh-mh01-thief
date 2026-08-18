@@ -15,7 +15,7 @@ class Position(NamedTuple):
     row: int
     col: int
 
-    def __add__(self, other: "Position") -> "Position":  # type: ignore[override]
+    def __add__(self, other: Position) -> Position:  # type: ignore[override]
         return Position(self.row + other.row, self.col + other.col)
 
 
@@ -66,5 +66,5 @@ class Board:
     def orthogonal_neighbors(self, pos: Position) -> tuple[Position, ...]:
         return tuple(pos + delta_for(d) for d in ORTHOGONAL_DIRECTIONS)
 
-    def with_barrier(self, pos: Position) -> "Board":
+    def with_barrier(self, pos: Position) -> Board:
         return Board(grid_size=self.grid_size, barriers=self.barriers | {pos})

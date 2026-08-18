@@ -23,6 +23,8 @@ def make_raw_config(
     survival_thief: int = 10,
     tie_score: int = 2,
     technical_loss: int = 0,
+    response_timeout_sec: float = 30,
+    watchdog_timeout_sec: float = 60,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.2",
@@ -49,6 +51,10 @@ def make_raw_config(
             "survival_thief": survival_thief,
             "tie_score": tie_score,
             "technical_loss": technical_loss,
+        },
+        "network_and_league": {
+            "response_timeout_sec": response_timeout_sec,
+            "watchdog_timeout_sec": watchdog_timeout_sec,
         },
     }
 

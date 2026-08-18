@@ -33,8 +33,12 @@ def score_for(
 ) -> tuple[int, int]:
     """Return (police_score, thief_score) for a terminal condition.
 
-    `offending_side` is required for TECHNICAL_LOSS (kept for logging/report
-    purposes — the score itself is symmetric, see below) and ignored otherwise.
+    `offending_side` is optional context for TECHNICAL_LOSS, kept only for
+    logging/report purposes — the score itself is symmetric (see below) and
+    does not depend on it. It is `None` both for engine-internal technical
+    losses with no single guilty party (e.g. a wire-protocol divergence
+    detected by the counter check — see PRD-02 "Stage 2 corrections") and,
+    naturally, ignored for every other condition.
     """
     if condition in _CAPTURE_CONDITIONS:
         return (scoring.capture_cop, scoring.capture_thief)
@@ -43,8 +47,6 @@ def score_for(
         return (scoring.survival_cop, scoring.survival_thief)
 
     if condition is TerminalCondition.TECHNICAL_LOSS:
-        if offending_side is None:
-            raise ValueError("TECHNICAL_LOSS requires offending_side")
         # config/game.json only defines a single scalar `technical_loss`
         # value (0), and TODO.md is explicit that this means a 0/0 pair for
         # both sides — not just the offending side. See PRD-01.

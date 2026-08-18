@@ -29,9 +29,14 @@ def test_technical_loss_is_symmetric_zero_pair_regardless_of_offender(config, of
     )
 
 
-def test_technical_loss_requires_offending_side(config):
-    with pytest.raises(ValueError):
-        score_for(TerminalCondition.TECHNICAL_LOSS, config.scoring)
+def test_technical_loss_scores_the_symmetric_pair_with_no_offending_side(config):
+    # offending_side is optional context for TECHNICAL_LOSS (e.g. a
+    # wire-protocol divergence has no single attributable guilty party) —
+    # the score does not depend on it. See PRD-02 "Stage 2 corrections".
+    assert score_for(TerminalCondition.TECHNICAL_LOSS, config.scoring) == (
+        config.scoring.technical_loss,
+        config.scoring.technical_loss,
+    )
 
 
 def test_tie_is_reachable_and_scores_the_tie_pair(config):

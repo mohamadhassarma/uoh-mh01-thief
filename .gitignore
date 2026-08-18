@@ -15,6 +15,8 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 # ---- Runtime artefacts ----
 logs/
@@ -25,3 +27,12 @@ logs/
 Thumbs.db
 .vscode/
 .idea/
+
+# ---- Third-party copyrighted material: NEVER commit ----
+# The rulebook PDF (Dr. Segal's copyrighted work, educational-use licence
+# only) must never land in a repo we publish — that would be redistribution.
+# Kept on disk outside this repo (C:\dev\uni\_reference\) for reference only.
+# Scoped to this specific file (not *.pdf) since our own exam submission PDF
+# (uoh-mh01-exYY.pdf, per TODO.md) legitimately belongs in this repo.
+police_thief_p2p.pdf
+**/police_thief_p2p.pdf

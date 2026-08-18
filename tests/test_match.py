@@ -1,7 +1,12 @@
 import pytest
 
 from uoh_mh01.domain.board import Direction, Position
-from uoh_mh01.domain.match import BarrierAction, MoveAction, UndefinedOutcomeError, run_match
+from uoh_mh01.domain.match import (
+    BarrierAction,
+    MoveAction,
+    UndefinedOutcomeError,
+    run_match,
+)
 from uoh_mh01.domain.scoring import TerminalCondition
 from uoh_mh01.domain.state import Side
 

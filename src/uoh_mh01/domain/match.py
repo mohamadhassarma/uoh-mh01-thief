@@ -20,8 +20,8 @@ the rulebook simply does not define this outcome (see PRD-01).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Union
 
 from .board import Direction, Position
 from .config import GameConfig
@@ -83,7 +83,7 @@ class BarrierAction:
     target: Position
 
 
-Action = Union[MoveAction, BarrierAction]
+Action = MoveAction | BarrierAction
 Strategy = Callable[[MatchState, Side], Action]
 
 
