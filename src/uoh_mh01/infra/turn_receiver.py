@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 
+from ..domain import belief as belief_module
 from ..domain.match import UndefinedOutcomeError
 from ..domain.reducers import apply_barrier, apply_move
+from ..domain.scent import deserialize_field
 from ..domain.scoring import TerminalCondition, score_for
 from ..domain.sealed_payload import build_move_payload, state_str
 from ..domain.state import IllegalActionError, Side, other_side
@@ -112,6 +114,7 @@ class _TurnReceiverMixin:
                 action_type=entry.action_type.value,
                 detail=entry.detail,
                 state=state_str(new_state.board.grid_size, _sender_position(new_state, sender), new_state.board.barriers),
+                smell_grid=request.smell_grid,
             ),
             request.commit,
         )
@@ -121,6 +124,10 @@ class _TurnReceiverMixin:
         self.state = new_state
         self.log.record_action(self.state.move_log[-1])
         self.watchdog.heartbeat()
+        # PRD-04: fold the opponent's OWN transmitted trail (never their
+        # true position — that never crosses the wire) into my belief.
+        if request.smell_grid:
+            self._belief = belief_module.update_from_scent(self._belief, deserialize_field(request.smell_grid), self.state.board)
 
         if my_condition != request.claimed_condition:
             self._pending_error = DisputedOutcomeError(mine=my_condition, theirs=request.claimed_condition)

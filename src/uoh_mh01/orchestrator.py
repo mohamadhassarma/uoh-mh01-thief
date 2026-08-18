@@ -25,9 +25,12 @@ import random
 import time
 from typing import Any
 
+from .domain import belief as belief_module
+from .domain.belief import BeliefMap
 from .domain.config import GameConfig
 from .domain.crypto import seal
 from .domain.match import FIRST_MOVER, Strategy
+from .domain.scent import ScentField
 from .domain.sealed_payload import build_move_payload, state_str
 from .domain.state import MatchState, Side
 from .domain.strategies import make_random_strategy
@@ -94,12 +97,10 @@ class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin):
         # claim itself must not be lost from the record. See "Stage 2
         # corrections" (round 2) in PRD-02.
         self._unconfirmed_claim: str | None = None
-        # PRD-03: my own sealed (payload, nonce, commit) records, kept
-        # locally until the post-sub-game mutual audit reveals the nonces;
-        # and the opponent's live-received (payload, commit) pairs, which
-        # is what the interop kit's WARNINGS §5d principle audits the
-        # opponent's LATER reveal against — never a copy the revealer could
-        # rewrite after the fact.
+        # PRD-03: my own sealed (payload, nonce, commit) records, kept until
+        # the mutual audit reveals nonces; and the opponent's live-received
+        # (payload, commit) pairs, audited against per WARNINGS §5d — never
+        # a copy the revealer could rewrite after the fact.
         self.own_sealed_records: list[dict[str, Any]] = []
         self.received_commits = ReceivedCommitLog()
         # At-least-once delivery (interop kit SPEC §7.1): a retried
@@ -110,6 +111,11 @@ class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin):
         # lost RESPONSE (not a lost request) harmless instead of a spurious
         # rejection. See PRD-03 "Symmetric timeout outcomes".
         self._replayed_responses: dict[str, MoveResponse] = {}
+        # PRD-04: my own scent trail (domain/scent.py) and my belief about
+        # the opponent's hidden position (domain/belief.py) — never derived
+        # from the true opposing position (Zero-Trust, rule #1/#2).
+        self._own_scent_field: ScentField = {}
+        self._belief: BeliefMap = belief_module.initial_belief(self.state.board)
 
     # ------------------------------------------------------------------
     # The top-level match loop AND settling a final/claimed outcome
@@ -122,17 +128,22 @@ class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin):
     def _my_position(self) -> Any:
         return self.state.cop_pos if self.role is Side.POLICE else self.state.thief_pos
 
-    def _seal_own_record(self, *, step: int, action_type: str, detail: str) -> str:
+    def _seal_own_record(self, *, step: int, action_type: str, detail: str, smell_grid: dict[str, float] | None = None) -> str:
         """Build this step's payload (self-only position, matching the
         book/reference `state` convention), seal it (PRD-03), and stash the
         full record locally for the post-sub-game audit reveal. Returns only
-        the commit hash — the one thing that may go out on the wire now."""
+        the commit hash — the one thing that may go out on the wire now.
+
+        `smell_grid` (PRD-04) is sealed alongside the move so the opponent's
+        audit re-hash catches a grid that was quietly altered between what
+        went out live and what gets revealed."""
         payload = build_move_payload(
             step=step,
             role=self.role.value,
             action_type=action_type,
             detail=detail,
             state=state_str(self.state.board.grid_size, self._my_position(), self.state.board.barriers),
+            smell_grid=smell_grid,
         )
         sealed = seal(payload)
         self.own_sealed_records.append({"step": step, "payload": payload, "nonce": sealed["nonce"], "commit": sealed["commit"]})

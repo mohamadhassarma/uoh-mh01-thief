@@ -135,6 +135,70 @@
       uses shrunk values for speed); mirroring anything to the thief repo (deliberately
       deferred — this stage was police-repo-only throughout, per instruction).
 
+## Now (Stage 4: pheromones, scent field, belief map) — implementation done, not yet committed
+- [x] `domain/scent.py`: book ch.4.3's multiplicative decay formula, verified directly
+      against the PDF (unchanged from the stage-3 stub — no discrepancy found). The
+      deposit kernel is a verbatim 5x5 lookup (book figure 4 / interop kit's PROMOTED
+      `multiplicative_book_v1`, SPEC §5.1), not a derived formula — the kit's own
+      `closed_form_probe` shows the printed values sit inside a sigma-squared window so
+      narrow that round-to-2dp and truncation reproduce disjoint windows, so two teams
+      each independently "fitting a Gaussian" would silently diverge. Adopted an upper
+      clamp at `center_intensity` (0.9) as a reasoned deviation from the book's printed
+      (illustrative) `max(0, ...)`-only formula, same precedent as PRD-03's commit
+      preimage: without it a saturated, redeposited cell reaches 1.43, outside the
+      book's own declared range.
+- [x] `domain/belief.py`: normalized probability distribution over the board, masked to
+      reachable (non-barrier, in-bounds) cells structurally (recomputed from the current
+      board every call, not cached at init). `decay_confidence`'s blend-toward-uniform
+      and the likelihood floor are this project's own tuning choice — App F fixes the
+      scent field's physics, not a belief-confidence-decay formula — documented as such,
+      not attributed to the book.
+- [x] `belief.HintClaim`/`belief.apply_hint`: the hint-fusion INTERFACE only, per PRD-04's
+      explicit scope boundary — decoding free-language text into a claimed cell, and
+      deciding how much to trust/discount/invert a claim, are both stage 5's job. Default
+      weight 0 (ignored) so an unparsed/unpopulated hint is never silently trusted.
+- [x] Wired into the wire and the seal: `MoveRequest` gains `smell_grid`/`hint`
+      (`infra/protocol.py`, `infra/protocol_builders.py`, `infra/mcp_server.py`'s
+      `submit_move` tool signature — missed on the first pass and caught by the real
+      dual-subprocess integration test hanging until the extra kwargs were added there
+      too); `domain/sealed_payload.py::build_move_payload` seals `smell_grid` alongside
+      the move, so a grid that differs between what was sent live and what is later
+      revealed is caught by the existing mutual-audit re-hash — no new sanction path.
+- [x] `shared/locked_model.py::SCENT_MODEL_DOC` upgraded to the interop kit's real
+      `{family, name, params, example}` doc schema (SPEC §7) — the ad-hoc
+      `{family, name, formula, example}` shape was a stage-3 placeholder written before
+      this stage's model existed. Our `scent_model_sha256()` now reproduces the kit's own
+      **PROMOTED, published** hash for `multiplicative_book_v1` byte-for-byte
+      (`934c220d...`) — a real, checkable external-conformance signal, even though this
+      project is not a counted participant in that league.
+- [x] Interop kit vectors: 7/7 pass (emit centre + corner-clipped, pure_decay, clamp,
+      chain incl. the turn-3 fork, 3-turn field_walk, locked-model hash) — ported as data
+      fixtures (`tests/fixtures/vectors/scent_book_v3.json`), no kit code imported. None
+      adjusted to pass.
+- [x] Float determinism checked, not assumed: same field computed twice in-process, and
+      once more in a genuinely separate subprocess, serialize to byte-identical canonical
+      JSON. No non-determinism found — Python's shortest-round-trip float repr plus the
+      kit's pinned evaluation order is sufficient.
+- [x] Found and fixed a real bug via the existing dual-subprocess integration test: adding
+      `smell_grid`/`hint` to `MoveRequest` without updating `mcp_server.py`'s
+      `submit_move` tool *signature* made every real move call fail (the extra kwargs the
+      client sent had no matching server parameter), hanging the whole series until the
+      per-turn retry loop's watchdog ceiling. Fixed by adding the same two parameters to
+      the tool signature. Also found and fixed a static "no magic numbers" check flagging
+      a hard-coded `5` (kernel size) in `scent.py`'s own validation — replaced with
+      `len(_KERNEL)`, deriving the check structurally instead of duplicating the literal.
+- [x] 223/223 tests pass (up from 202 + 1 slow); coverage 92.64% (bar 85%); `ruff` clean
+      at the same 6 pre-existing findings, none new.
+- [x] Six-sub-game-length transcript captured at the real contract values (`max_moves=35`,
+      `survival_threshold=35`, real pheromone params) — `scripts/belief_transcript_demo.py`
+      — a domain-level demonstration (belief has no artifact/GUI hook until stage 6)
+      exercising the exact production `emit`/`advance_field`/`update_from_scent`
+      functions the real per-turn wire path calls, showing peak belief probability rise
+      from ~0.12 (near-uniform) to a stable ~0.32-0.35 band as the thief's real scent
+      trail accumulates, correctly landing exactly on the true cell on repeated turns.
+- [ ] Not yet done this round: mirroring anything to the thief repo (deliberately
+      deferred, same as stage 3 — awaiting explicit instruction).
+
 ## Blocked / needs negotiation with opponent group
 - [ ] Agree `config/game.json` byte-for-byte with opponent group — **now includes the
       `num_games: 1 -> 6` change**; must be re-verified byte-identical with the thief
@@ -263,7 +327,7 @@
       repos. Do not guess further; ask the professor directly.
 
 ## Admin
-- [ ] Fill team member IDs in `config/thief/game.toml`
+- [ ] Fill team member IDs in `config/police/game.toml`
 - [ ] Verify `.gitignore` blocks `credentials.json` and `token.json`
 - [ ] Each team member submits separately on Moodle
 - [ ] Word template -> `uoh-mh01-exYY.pdf` (do not move or edit fields)
