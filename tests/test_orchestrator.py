@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 
 import uoh_mh01.infra.mcp_client as mcp_client_module
 from uoh_mh01.domain.board import Direction
@@ -74,6 +75,10 @@ async def test_opponent_rejection_produces_technical_loss_for_the_sender(config_
         _peer_config(),
         strategy=lambda state, side: MoveAction(Direction.E),
     )
+    # Explicit, independent of whichever side FIRST_MOVER happens to be:
+    # this test is about MY OWN outbound send failing, which requires it to
+    # be MY turn.
+    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -96,6 +101,9 @@ async def test_divergence_response_produces_unscored_technical_loss(config_facto
         _peer_config(),
         strategy=lambda state, side: MoveAction(Direction.E),
     )
+    # Explicit, independent of whichever side FIRST_MOVER happens to be:
+    # this test needs MY OWN send_move call to actually fire.
+    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -120,6 +128,10 @@ async def test_turn_timeout_seconds_self_forfeits_independently_of_watchdog_time
         _peer_config(turn_timeout_seconds=0.05),
         strategy=lambda state, side: MoveAction(Direction.E),
     )
+    # Explicit, independent of whichever side FIRST_MOVER happens to be:
+    # this test needs it to be MY turn so MY OWN turn_timeout_seconds budget
+    # is what fires.
+    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -133,11 +145,15 @@ async def test_turn_timeout_seconds_forfeits_a_silent_opponent_before_the_looser
     # should be able to catch this quickly.
     config = config_factory(watchdog_timeout_sec=10)
     runtime = PeerRuntime(
-        Side.THIEF,  # not FIRST_MOVER — starts by waiting for the opponent
+        Side.THIEF,
         config,
         _peer_config(role="thief", turn_timeout_seconds=0.05),
         strategy=lambda state, side: MoveAction(Direction.E),
     )
+    # Explicit, independent of whichever side FIRST_MOVER happens to be:
+    # this test is about waiting for an opponent who never moves, so it must
+    # start on the OPPONENT's turn, not mine.
+    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -157,11 +173,14 @@ async def test_freeze_detected_with_no_narrower_timeout_still_resolves_to_techni
     # "the protocol didn't resolve" case.
     config = config_factory(watchdog_timeout_sec=0.05)
     runtime = PeerRuntime(
-        Side.THIEF,  # not FIRST_MOVER — starts by waiting for the opponent (police)
+        Side.THIEF,
         config,
         _peer_config(role="thief", turn_timeout_seconds=1.0),  # looser than the watchdog
         strategy=lambda state, side: MoveAction(Direction.E),
     )
+    # Explicit, independent of whichever side FIRST_MOVER happens to be:
+    # this test needs to start on the OPPONENT's (police's) turn.
+    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -190,6 +209,10 @@ async def test_unconfirmed_claim_after_opponent_silence_is_recorded_in_the_log(c
         _peer_config(),
         strategy=lambda state, side: MoveAction(Direction.E),
     )
+    # Explicit, independent of whichever side FIRST_MOVER happens to be:
+    # this test needs MY OWN move (the claimed capture) to actually be
+    # attempted, which requires it to be my turn.
+    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 

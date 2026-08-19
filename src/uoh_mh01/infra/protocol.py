@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-TOOL_NAME = "submit_move"
+TOOL_NAME = "receive_turn"
 
 _ACTION_TYPES = frozenset({"move", "barrier", "declare_terminal"})
 
@@ -66,7 +66,7 @@ class MoveRequest:
     # real crypto; a real peer always sends a non-empty commit.
     commit: str = ""
     # PRD-03: which sub-game of the series this move belongs to (interop kit
-    # SPEC §7.2's pairing-declaration pattern, applied here to submit_move
+    # SPEC §7.2's pairing-declaration pattern, applied here to receive_turn
     # too). The two peers' series loops are not perfectly wall-clock
     # synchronized between sub-games — the receiver uses this to wait for
     # (rather than misattribute to the wrong sub-game, or flatly reject) a
@@ -85,6 +85,14 @@ class MoveRequest:
     # HintClaim for why an empty/absent hint is never treated as truthful
     # silence, just as absence of a claim.
     hint: str = ""
+    # PRD-05: the sender's OWN self-declared verdict on the hint above —
+    # True if `hint` is truthful, False if it is a deliberate lie. Sealed
+    # alongside `hint` (domain/sealed_payload.py) so a sender that reveals a
+    # DIFFERENT verdict at audit than the one it actually sent live is
+    # exactly the "lying about whether you lied" tamper case (PRD-05
+    # section C) — caught by the existing commit-reveal re-hash, no new
+    # mechanism needed. `None` only for declare_terminal (no hint sent).
+    hint_is_true: bool | None = None
 
     def to_kwargs(self) -> dict[str, Any]:
         return {
@@ -102,4 +110,5 @@ class MoveRequest:
             "sub_game_number": self.sub_game_number,
             "smell_grid": self.smell_grid,
             "hint": self.hint,
+            "hint_is_true": self.hint_is_true,
         }

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from ..domain.hints import enforce_word_cap
 from ..domain.match import Action, BarrierAction, MoveAction
 from ..domain.reducers import apply_barrier, apply_move
 from ..domain.scent import advance_field, emit, serialize_field
@@ -37,6 +38,13 @@ class _TurnSenderMixin(_TurnResolverMixin):
             return
 
         self._transition(Phase.COMPUTING_MOVE)
+        # PRD-05: a BrainBase-based strategy reads its `belief` attribute
+        # inside __call__ — set it immediately before invoking, never
+        # passed as a call argument, so the Strategy signature stays
+        # exactly Callable[[MatchState, Side], Action] and every pre-
+        # existing 2-argument lambda strategy keeps working unchanged.
+        if hasattr(self._strategy, "belief"):
+            self._strategy.belief = self._belief
         try:
             action: Action = self._strategy(self.state, self.role)
         except Exception:
@@ -68,8 +76,19 @@ class _TurnSenderMixin(_TurnResolverMixin):
             deposit = emit(self._my_position(), new_state.board, self.config.pheromones)
             self._own_scent_field = advance_field(self._own_scent_field, deposit, self.config.pheromones)
             smell_grid = serialize_field(self._own_scent_field)
+            # PRD-05: a BrainBase-based strategy stashed (text, is_true) on
+            # itself during __call__ above; a plain lambda strategy (tests,
+            # or a peer with no brain configured) has none, so hint stays
+            # silent rather than inventing a claim on the strategy's behalf.
+            hint_text, hint_is_true = getattr(self._strategy, "last_hint", ("", None))
+            hint_text = enforce_word_cap(hint_text, self.config.world.hint_max_words)
             commit = self._seal_own_record(
-                step=turn_number, action_type=entry.action_type.value, detail=entry.detail, smell_grid=smell_grid
+                step=turn_number,
+                action_type=entry.action_type.value,
+                detail=entry.detail,
+                smell_grid=smell_grid,
+                hint=hint_text,
+                hint_is_true=hint_is_true,
             )
             self.log.record_action(self.state.move_log[-1])
             if claim is None:
@@ -85,6 +104,8 @@ class _TurnSenderMixin(_TurnResolverMixin):
             commit=commit,
             sub_game_number=self.sub_game_number,
             smell_grid=smell_grid,
+            hint=hint_text,
+            hint_is_true=hint_is_true,
         )
         self._transition(Phase.AWAITING_REVEAL)
         await self._send_and_resolve(request, claim)

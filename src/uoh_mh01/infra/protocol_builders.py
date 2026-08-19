@@ -25,6 +25,7 @@ def parse_move_request(
     sub_game_number: int = 1,
     smell_grid: dict[str, float] | None = None,
     hint: str = "",
+    hint_is_true: bool | None = None,
 ) -> MoveRequest:
     if role not in ("police", "thief"):
         raise ProtocolError(f"role must be 'police' or 'thief', got {role!r}")
@@ -54,6 +55,7 @@ def parse_move_request(
         sub_game_number=sub_game_number,
         smell_grid=smell_grid,
         hint=hint,
+        hint_is_true=hint_is_true,
     )
 
 
@@ -69,6 +71,7 @@ def action_to_request(
     sub_game_number: int = 1,
     smell_grid: dict[str, float] | None = None,
     hint: str = "",
+    hint_is_true: bool | None = None,
 ) -> MoveRequest:
     if isinstance(action, MoveAction):
         base = {
@@ -96,6 +99,7 @@ def action_to_request(
         sub_game_number=sub_game_number,
         smell_grid=smell_grid,
         hint=hint,
+        hint_is_true=hint_is_true,
     )
 
 

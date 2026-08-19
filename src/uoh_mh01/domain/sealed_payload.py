@@ -1,10 +1,11 @@
 """What actually goes inside a sealed commit-reveal record (PRD-03).
 
-Deliberately minimal compared to the reference's own richer record (hint,
-verdict, prompt_discussion, tokens): stage 5's verbal layer does not exist
-yet in this codebase, so this payload carries only what stage 3 actually
-has — never a faked `intent`/`hint` field standing in for a layer that
-isn't built. Extending this dict is stage 5's job, not stage 3's.
+PRD-05 adds `hint` and `hint_is_true` to the sealed shape: the hint text
+AND the sender's own self-declared truth/lie verdict on it are both inside
+the same commit-reveal umbrella as everything else here, so a sender that
+reveals either one differently from what it actually sent live is caught
+by the EXISTING mutual-audit re-hash — "lying about whether you lied" is
+not a new sanction path, just a consequence of sealing the verdict at all.
 """
 
 from __future__ import annotations
@@ -24,7 +25,15 @@ def state_str(grid_size: int, position: Position, barriers: frozenset[Position])
 
 
 def build_move_payload(
-    *, step: int, role: str, action_type: str, detail: str, state: str, smell_grid: dict[str, float] | None = None
+    *,
+    step: int,
+    role: str,
+    action_type: str,
+    detail: str,
+    state: str,
+    smell_grid: dict[str, float] | None = None,
+    hint: str = "",
+    hint_is_true: bool | None = None,
 ) -> dict[str, Any]:
     # PRD-04: the scent field is part of the sealed record, not a side
     # channel — a grid that differs between what was actually sent live and
@@ -39,6 +48,8 @@ def build_move_payload(
         "detail": detail,
         "state": state,
         "smell_grid": smell_grid or {},
+        "hint": hint,
+        "hint_is_true": hint_is_true,
     }
 
 

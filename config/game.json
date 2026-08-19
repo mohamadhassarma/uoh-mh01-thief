@@ -27,7 +27,8 @@
   "pheromones": {
     "pheromone_center_intensity": 0.9,
     "pheromone_decay": 0.10,
-    "pheromone_grid_size": 5
+    "pheromone_grid_size": 5,
+    "pheromone_min_center_intensity": 0.5
   },
   "network_and_league": {
     "response_timeout_sec": 30, "watchdog_timeout_sec": 60,

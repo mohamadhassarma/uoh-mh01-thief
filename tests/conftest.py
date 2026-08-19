@@ -29,6 +29,7 @@ def make_raw_config(
     pheromone_center_intensity: float = 0.9,
     pheromone_decay: float = 0.1,
     pheromone_grid_size: int = 5,
+    pheromone_min_center_intensity: float = 0.5,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.2",
@@ -60,6 +61,7 @@ def make_raw_config(
             "pheromone_center_intensity": pheromone_center_intensity,
             "pheromone_decay": pheromone_decay,
             "pheromone_grid_size": pheromone_grid_size,
+            "pheromone_min_center_intensity": pheromone_min_center_intensity,
         },
         "network_and_league": {
             "response_timeout_sec": response_timeout_sec,

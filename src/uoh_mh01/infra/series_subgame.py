@@ -9,8 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ..domain.brain_base import resolve_strategy
 from ..domain.match import UndefinedOutcomeError
-from ..domain.state import other_side
+from ..domain.state import Side, other_side
 from .artifacts import LogArtifactBuilder, build_config_artifact, write_json
 from .mcp_client import send_audit_reveal
 from .outcomes import DisputedOutcomeError
@@ -20,12 +21,24 @@ logger = logging.getLogger(__name__)
 
 
 async def play_one_sub_game(
-    series_runtime, sub_game_number, natural_role, config, peer_config, strategy, game_id, game_uid, my_msg, theirs, out_dir
+    series_runtime,
+    sub_game_number,
+    natural_role,
+    config,
+    peer_config,
+    strategy,
+    seed,
+    game_id,
+    game_uid,
+    my_msg,
+    theirs,
+    out_dir,
 ) -> dict[str, Any]:
     from ..orchestrator import PeerRuntime  # local import: avoid a cycle with orchestrator's own imports
 
     role = natural_role if sub_game_number % 2 == 1 else other_side(natural_role)
-    peer_runtime = PeerRuntime(role, config, peer_config, strategy=strategy, sub_game_number=sub_game_number)
+    this_sub_game_strategy = strategy or _strategy_for_sub_game(peer_config, role, seed, sub_game_number)
+    peer_runtime = PeerRuntime(role, config, peer_config, strategy=this_sub_game_strategy, sub_game_number=sub_game_number)
     series_runtime.start_sub_game(sub_game_number, peer_runtime)
 
     summary: dict[str, Any] = {"sub_game_number": sub_game_number, "role": role.value}
@@ -61,7 +74,7 @@ async def play_one_sub_game(
         # an opponent who goes silent specifically during the audit
         # exchange does not get to unwind an already-settled sub-game.
         # Logged as a genuine gap in the audit trail, not silently ignored.
-        logger.warning("opponent unresponsive during reveal_audit for sub-game %s", sub_game_number)
+        logger.warning("opponent unresponsive during submit_audit for sub-game %s", sub_game_number)
         audit_of_me = None
     audit_of_opponent = await series_runtime.wait_for_audit_of_opponent(
         sub_game_number, timeout=config.network.watchdog_timeout_sec
@@ -97,6 +110,22 @@ async def play_one_sub_game(
         ),
     )
     return summary
+
+
+def _strategy_for_sub_game(peer_config, role, seed, sub_game_number):
+    """Resolves a FRESH, role-correct brain for THIS sub-game, never reused
+    across a role-alternating series (called only when the caller did not
+    pass an explicit fixed `strategy` — e.g. the stalling-peer test runner,
+    which deliberately wants one strategy for every sub-game regardless of
+    role). A single strategy resolved once, at series start, from the
+    process's natural role would silently run the wrong brain (or carry
+    stale cross-sub-game state, e.g. a thief's direction streak) on every
+    role-swapped sub-game — PRD-05's `[strategy] police_class`/`thief_class`
+    are two DIFFERENT classes precisely because this process plays police in
+    some sub-games and thief in others."""
+    dotted_path = peer_config.police_class if role is Side.POLICE else peer_config.thief_class
+    sub_game_seed = seed if seed is None else f"{seed}-{sub_game_number}"
+    return resolve_strategy(dotted_path, sub_game_seed)
 
 
 def _winner_role(outcome) -> str | None:

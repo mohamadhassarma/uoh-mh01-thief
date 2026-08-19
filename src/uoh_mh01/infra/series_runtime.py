@@ -1,7 +1,7 @@
 """SeriesRuntime: the ONE long-lived object per process for the whole
 num_games-sub-game series (PRD-03). Owns the FastMCP server — built once,
 listening for the whole series, unlike stage 2's per-match server — and
-answers `negotiate`/`reveal_audit` directly; `submit_move` traffic is
+answers `negotiate`/`submit_audit` directly; `receive_turn` traffic is
 delegated to whichever PeerRuntime is currently playing a sub-game.
 """
 
@@ -18,7 +18,7 @@ from .protocol_response import MoveResponse
 
 
 class StaleAuditRevealError(Exception):
-    """Raised when an incoming reveal_audit call names a sub_game_number
+    """Raised when an incoming submit_audit call names a sub_game_number
     this side has not started even after a bounded wait — the two sides'
     loops are not perfectly wall-clock synchronized between sub-games, so
     this is treated as a retry case by the caller (mcp_client's
@@ -31,7 +31,7 @@ class SeriesRuntime:
         self.current_sub_game_number: int | None = None
         self._my_negotiate_message: NegotiateMessage | None = None
         # Keyed by sub_game_number, never reset by a later sub-game starting —
-        # a reveal_audit for sub-game N can legitimately arrive well after
+        # a submit_audit call for sub-game N can legitimately arrive well after
         # this side has already moved on to sub-game N+1 (its opponent was
         # simply slower to finish N), and must still land against N's own
         # commit log and wake N's own waiter, not get silently discarded or
@@ -45,8 +45,8 @@ class SeriesRuntime:
 
     def start_sub_game(self, sub_game_number: int, peer_runtime: Any) -> None:
         """Call once per sub-game, before running its match — tags which
-        sub-game is now current (for routing submit_move traffic) and
-        registers it so a reveal_audit for THIS sub-game can be served
+        sub-game is now current (for routing receive_turn traffic) and
+        registers it so a submit_audit call for THIS sub-game can be served
         (immediately, or after a bounded wait if it arrives first)."""
         self.current_peer_runtime = peer_runtime
         self.current_sub_game_number = sub_game_number
@@ -69,9 +69,9 @@ class SeriesRuntime:
         # synchronized between sub-games (or even at series start, right
         # after the handshake) — a message legitimately meant for the
         # sub-game I am ABOUT to start can arrive before I've called
-        # start_sub_game() for it. submit_move is not retried by the sender
+        # start_sub_game() for it. receive_turn is not retried by the sender
         # on an application-level rejection (only on transport failure), so
-        # unlike reveal_audit's StaleAuditRevealError (which relies on the
+        # unlike submit_audit's StaleAuditRevealError (which relies on the
         # caller's own retry loop), this side must absorb the wait itself —
         # bounded, so a message for a sub-game I will never reach still
         # fails cleanly rather than hanging.
@@ -106,7 +106,7 @@ class SeriesRuntime:
                 peer_runtime = self._peer_runtimes_by_sub_game.get(sub_game_number)
             if peer_runtime is None:
                 raise StaleAuditRevealError(
-                    f"reveal_audit for sub_game_number={sub_game_number}, which I have not started "
+                    f"submit_audit for sub_game_number={sub_game_number}, which I have not started "
                     "even after a bounded wait — the caller's retry loop will try again shortly"
                 )
         result = verify_revealed(records, peer_runtime.received_commits)

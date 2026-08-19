@@ -114,4 +114,4 @@ def test_apply_hint_with_negative_weight_can_invert_a_suspected_bluff():
 def _pheromones():
     from uoh_mh01.domain.config_models import PheromoneConfig
 
-    return PheromoneConfig(center_intensity=0.9, decay=0.1, grid_size=5)
+    return PheromoneConfig(center_intensity=0.9, decay=0.1, grid_size=5, min_center_intensity=0.5)

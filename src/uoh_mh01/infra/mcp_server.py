@@ -1,6 +1,15 @@
-"""The inbound half of the peer: a FastMCP server exposing the three tools
-the opponent calls: `submit_move` (every turn), `negotiate` (once, at series
-start), and `reveal_audit` (once per sub-game, at its end).
+"""The inbound half of the peer: a FastMCP server exposing the reference/
+interop-kit wire surface (SPEC §7.5, PROMOTED — `vectors/turn_message.json`):
+`negotiate` (once, at series start), `receive_turn` (every turn),
+`submit_audit` (once per sub-game, at its end), and the optional
+`receive_control` status channel. Each REQUIRED tool takes a single dict
+argument — `message` for `negotiate`/`receive_turn`/`receive_control`,
+`payload` for `submit_audit` — mirroring the reference's own documented
+asymmetry exactly, not a per-field parameter list of this project's own
+invention (stage-5 close-out: our previous `submit_move`/`reveal_audit`
+names and per-field signatures were a genuine wire-shape deviation, found
+via a live rehearsal against the interop kit's sparring peer and confirmed
+against `ref_impl/src/police_thief/infra/mcp_server.py`).
 
 Tool handlers contain no game logic — they parse the wire request and
 delegate straight to the runtime, per rule #3 (the Orchestrator/runtime
@@ -30,68 +39,27 @@ def build_server(runtime: PeerServerHandlers, *, name: str = "uoh-mh01-peer") ->
     mcp = FastMCP(name)
 
     @mcp.tool
-    async def submit_move(
-        role: str,
-        turn_number: int,
-        action_type: str,
-        direction: str | None = None,
-        target_row: int | None = None,
-        target_col: int | None = None,
-        police_actions_taken: int = 0,
-        thief_actions_taken: int = 0,
-        claimed_condition: str | None = None,
-        claimed_offending_side: str | None = None,
-        commit: str = "",
-        sub_game_number: int = 1,
-        smell_grid: dict[str, float] | None = None,
-        hint: str = "",
-    ) -> dict[str, Any]:
-        request = parse_move_request(
-            role,
-            turn_number,
-            action_type,
-            direction,
-            target_row,
-            target_col,
-            police_actions_taken,
-            thief_actions_taken,
-            claimed_condition,
-            claimed_offending_side,
-            commit,
-            sub_game_number,
-            smell_grid,
-            hint,
-        )
+    async def receive_turn(message: dict[str, Any]) -> dict[str, Any]:
+        request = parse_move_request(**message)
         response = await runtime.receive_opponent_move(request)
         return response.to_dict()
 
     @mcp.tool
-    async def negotiate(
-        terms: dict[str, Any],
-        nonce: str,
-        signature: str,
-        identity: dict[str, Any],
-        scent_model_sha256: str,
-        sub_game_number: int,
-        role: str,
-    ) -> dict[str, Any]:
-        message = NegotiateMessage.from_dict(
-            {
-                "terms": terms,
-                "nonce": nonce,
-                "signature": signature,
-                "identity": identity,
-                "scent_model_sha256": scent_model_sha256,
-                "sub_game_number": sub_game_number,
-                "role": role,
-            }
-        )
-        response = await runtime.receive_negotiate(message)
+    async def negotiate(message: dict[str, Any]) -> dict[str, Any]:
+        negotiate_message = NegotiateMessage.from_dict(message)
+        response = await runtime.receive_negotiate(negotiate_message)
         return response.to_kwargs()
 
     @mcp.tool
-    async def reveal_audit(records: list[dict[str, Any]], sub_game_number: int) -> dict[str, Any]:
-        result = await runtime.receive_audit_reveal(records, sub_game_number)
+    async def submit_audit(payload: dict[str, Any]) -> dict[str, Any]:
+        result = await runtime.receive_audit_reveal(payload["records"], payload["sub_game_number"])
         return {"passed": result.passed, "verified_steps": result.verified_steps, "failed_steps": list(result.failed_steps)}
+
+    @mcp.tool
+    async def receive_control(message: dict[str, Any]) -> dict[str, Any]:
+        # OPTIONAL per SPEC §7.5: "a status channel touching no game state;
+        # answering 200 is conformant" — no runtime wiring needed, matching
+        # the reference/kit's own implementation of this tool exactly.
+        return {"ok": True}
 
     return mcp

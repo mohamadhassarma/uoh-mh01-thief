@@ -85,8 +85,6 @@ def cmd_peer(args: argparse.Namespace) -> int:
         print(f"peer config error: {exc}", file=sys.stderr)
         return 2
 
-    strategy = make_random_strategy(random.Random(args.seed))
-
     print(f"Role:            {role.value}")
     print(f"Group:           {peer_config.group_name} ({peer_config.group_id})")
     print(f"Listening on:    127.0.0.1:{peer_config.my_port}")
@@ -107,7 +105,7 @@ def cmd_peer(args: argparse.Namespace) -> int:
     print()
 
     try:
-        summaries = asyncio.run(run_series(role, config, peer_config, strategy=strategy, out_dir=str(out_dir)))
+        summaries = asyncio.run(run_series(role, config, peer_config, seed=args.seed, out_dir=str(out_dir)))
     except NegotiationRefusedError as exc:
         print("Handshake REFUSED — the series never started playing:")
         print(f"  {exc}")
