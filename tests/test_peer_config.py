@@ -27,6 +27,19 @@ def test_valid_peer_config_parses():
     assert peer.turn_timeout_seconds == 180
 
 
+def test_strategy_class_is_optional_and_defaults_to_none():
+    peer = parse_peer_config("police", _VALID_TOML, _VALID_JSON)
+    assert peer.police_class is None
+    assert peer.thief_class is None
+
+
+def test_strategy_class_parses_when_present():
+    toml = {**_VALID_TOML, "strategy": {"police_class": "uoh_mh01.domain.police_brain:ContainmentPoliceBrain"}}
+    peer = parse_peer_config("police", toml, _VALID_JSON)
+    assert peer.police_class == "uoh_mh01.domain.police_brain:ContainmentPoliceBrain"
+    assert peer.thief_class is None
+
+
 def test_missing_field_raises_clearly():
     toml = {"game": {"group_id": "x", "group_name": "y"}, "network": {"my_port": 8801, "opponent_url": "u"}}
     with pytest.raises(PeerConfigError, match="turn_timeout_seconds"):
@@ -43,11 +56,12 @@ def test_real_toml_loads_from_disk():
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[1]
-    peer = load_peer_config("thief", repo_root / "config" / "thief" / "game.toml", repo_root / "config" / "game.json")
-    assert peer.role == "thief"
+    peer = load_peer_config("police", repo_root / "config" / "police" / "game.toml", repo_root / "config" / "game.json")
+    assert peer.role == "police"
     assert peer.group_id == "uoh-mh01"
-    assert peer.my_port == 8802
-    assert peer.opponent_url == "http://127.0.0.1:8801/mcp"
+    assert peer.my_port == 8801
+    assert peer.opponent_url == "http://127.0.0.1:8802/mcp"
+    assert peer.police_class == "uoh_mh01.domain.police_brain:ContainmentPoliceBrain"
 
 
 # --- overlay rule: the signed contract always wins on a shared key ---

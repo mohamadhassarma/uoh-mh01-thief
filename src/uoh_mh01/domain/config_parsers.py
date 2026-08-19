@@ -142,4 +142,5 @@ def parse_pheromones(raw: dict[str, Any]) -> PheromoneConfig:
         center_intensity=require_positive_number(section, "pheromone_center_intensity", path),
         decay=require_positive_number(section, "pheromone_decay", path),
         grid_size=require_positive_int(section, "pheromone_grid_size", path),
+        min_center_intensity=require_positive_number(section, "pheromone_min_center_intensity", path),
     )

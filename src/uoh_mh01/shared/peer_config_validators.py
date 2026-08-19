@@ -43,6 +43,17 @@ def require_positive_number(d: dict[str, Any], path: str) -> float:
     return value
 
 
+def optional_str(d: dict[str, Any], path: str) -> str | None:
+    node: Any = d
+    for segment in path.split("."):
+        if not isinstance(node, dict) or segment not in node:
+            return None
+        node = node[segment]
+    if not isinstance(node, str) or not node:
+        raise PeerConfigError(f"config/<role>/game.toml: '{path}' must be a non-empty string, got {node!r}")
+    return node
+
+
 def optional_str_list(d: dict[str, Any], path: str) -> tuple[str, ...]:
     node: Any = d
     for segment in path.split("."):

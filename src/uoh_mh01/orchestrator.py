@@ -28,10 +28,8 @@ from typing import Any
 from .domain import belief as belief_module
 from .domain.belief import BeliefMap
 from .domain.config import GameConfig
-from .domain.crypto import seal
 from .domain.match import FIRST_MOVER, Strategy
 from .domain.scent import ScentField
-from .domain.sealed_payload import build_move_payload, state_str
 from .domain.state import MatchState, Side
 from .domain.strategies import make_random_strategy
 from .infra.audit import ReceivedCommitLog
@@ -39,6 +37,7 @@ from .infra.match_log import MatchLogRecorder
 from .infra.match_loop import _MatchLoopMixin
 from .infra.outcomes import DisputedOutcomeError, MatchOutcome
 from .infra.protocol_response import MoveResponse
+from .infra.sealing import _SealingMixin
 from .infra.state_machine import StateMachine
 from .infra.turn_receiver import _TurnReceiverMixin
 from .infra.turn_sender import _TurnSenderMixin
@@ -50,7 +49,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["DisputedOutcomeError", "MatchOutcome", "PeerRuntime"]
 
 
-class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin):
+class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin, _SealingMixin):
     """Owns this peer's local copy of the match, its state machine, and its
     watchdog, and drives its own active turns. The MCP server's tool handler
     (infra/mcp_server.py) delegates incoming opponent moves straight to
@@ -104,7 +103,7 @@ class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin):
         self.own_sealed_records: list[dict[str, Any]] = []
         self.received_commits = ReceivedCommitLog()
         # At-least-once delivery (interop kit SPEC §7.1): a retried
-        # submit_move/reveal_audit call carries the SAME commit as the
+        # receive_turn/submit_audit call carries the SAME commit as the
         # original. Caching the response we gave the first time and
         # replaying it verbatim on a repeat — rather than re-evaluating the
         # request against state that has since moved on — is what makes a
@@ -119,32 +118,7 @@ class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin):
 
     # ------------------------------------------------------------------
     # The top-level match loop AND settling a final/claimed outcome
-    # (_MatchLoopMixin), and the two turn-handling halves
-    # (_TurnSenderMixin, _TurnReceiverMixin) hold the rest of PeerRuntime's
-    # behaviour; what remains here is per-step sealing, owned directly by
-    # this class since it is where own_sealed_records lives.
+    # (_MatchLoopMixin), the two turn-handling halves (_TurnSenderMixin,
+    # _TurnReceiverMixin), and per-step sealing (_SealingMixin) hold the
+    # rest of PeerRuntime's behaviour — nothing else lives here.
     # ------------------------------------------------------------------
-
-    def _my_position(self) -> Any:
-        return self.state.cop_pos if self.role is Side.POLICE else self.state.thief_pos
-
-    def _seal_own_record(self, *, step: int, action_type: str, detail: str, smell_grid: dict[str, float] | None = None) -> str:
-        """Build this step's payload (self-only position, matching the
-        book/reference `state` convention), seal it (PRD-03), and stash the
-        full record locally for the post-sub-game audit reveal. Returns only
-        the commit hash — the one thing that may go out on the wire now.
-
-        `smell_grid` (PRD-04) is sealed alongside the move so the opponent's
-        audit re-hash catches a grid that was quietly altered between what
-        went out live and what gets revealed."""
-        payload = build_move_payload(
-            step=step,
-            role=self.role.value,
-            action_type=action_type,
-            detail=detail,
-            state=state_str(self.state.board.grid_size, self._my_position(), self.state.board.barriers),
-            smell_grid=smell_grid,
-        )
-        sealed = seal(payload)
-        self.own_sealed_records.append({"step": step, "payload": payload, "nonce": sealed["nonce"], "commit": sealed["commit"]})
-        return sealed["commit"]

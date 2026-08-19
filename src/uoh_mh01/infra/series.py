@@ -24,13 +24,29 @@ logger = logging.getLogger(__name__)
 
 
 async def run_series(
-    role: Side, config, peer_config: PeerConfig, *, strategy=None, out_dir: str | Path | None = None
+    role: Side,
+    config,
+    peer_config: PeerConfig,
+    *,
+    strategy=None,
+    seed: int | str | None = None,
+    out_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Returns one summary dict per sub-game played:
     `{"sub_game_number", "role", "terminal_condition", "police_score",
     "thief_score", "offending_side", "undefined_outcome", "disputed"}`.
     Raises `infra.negotiation.NegotiationRefusedError` if the handshake itself
-    fails — the series never starts playing on a terms mismatch."""
+    fails — the series never starts playing on a terms mismatch.
+
+    `strategy`, if given, is used AS-IS for every sub-game regardless of role
+    alternation (only test callers that need one fixed, role-agnostic
+    strategy — e.g. the stalling-peer test runner — should pass this).
+    Otherwise (the real `peer` CLI path) `seed` plus `peer_config`'s
+    `[strategy] police_class`/`thief_class` are used to resolve a FRESH,
+    role-correct brain for each sub-game (PRD-05) — required because role
+    alternation means this process plays police in some sub-games and thief
+    in others, and a role-specific brain must only ever run for its own
+    role."""
     out_dir = Path(out_dir or "logs")
     natural_role = role
     series_runtime = SeriesRuntime()
@@ -63,6 +79,7 @@ async def run_series(
                     config,
                     peer_config,
                     strategy,
+                    seed,
                     game_id,
                     game_uid,
                     my_msg,

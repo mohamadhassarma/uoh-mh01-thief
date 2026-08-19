@@ -20,20 +20,20 @@ from .watchdog import FreezeWatchdog, OpponentUnresponsiveError, call_with_timeo
 
 
 async def send_move(opponent_url: str, request: MoveRequest, *, response_timeout_sec: float) -> MoveResponse:
-    """Deliver `request` to the opponent's submit_move tool and return their
+    """Deliver `request` to the opponent's receive_turn tool and return their
     response. Raises OpponentUnresponsiveError if the opponent doesn't
     respond within response_timeout_sec, for any reason."""
 
     async def _call() -> MoveResponse:
         async with Client(opponent_url, timeout=response_timeout_sec) as client:
             result = await client.call_tool(
-                "submit_move",
-                request.to_kwargs(),
+                "receive_turn",
+                {"message": request.to_kwargs()},
                 timeout=response_timeout_sec,
             )
             return MoveResponse.from_dict(result.data)
 
-    return await call_with_timeout(_call(), operation="submit_move", timeout_sec=response_timeout_sec)
+    return await call_with_timeout(_call(), operation="receive_turn", timeout_sec=response_timeout_sec)
 
 
 async def send_with_retry(
@@ -68,7 +68,7 @@ async def send_negotiate(
 
     async def _call() -> NegotiateMessage:
         async with Client(opponent_url, timeout=response_timeout_sec) as client:
-            result = await client.call_tool("negotiate", message.to_kwargs(), timeout=response_timeout_sec)
+            result = await client.call_tool("negotiate", {"message": message.to_kwargs()}, timeout=response_timeout_sec)
             return NegotiateMessage.from_dict(result.data)
 
     deadline_clock = asyncio.get_event_loop().time
@@ -102,7 +102,9 @@ async def send_audit_reveal(
     async def _call() -> AuditResult:
         async with Client(opponent_url, timeout=response_timeout_sec) as client:
             result = await client.call_tool(
-                "reveal_audit", {"records": records, "sub_game_number": sub_game_number}, timeout=response_timeout_sec
+                "submit_audit",
+                {"payload": {"records": records, "sub_game_number": sub_game_number}},
+                timeout=response_timeout_sec,
             )
             data = result.data
             return AuditResult(passed=data["passed"], verified_steps=data["verified_steps"], failed_steps=tuple(data["failed_steps"]))
@@ -111,7 +113,7 @@ async def send_audit_reveal(
     started = deadline_clock()
     while True:
         try:
-            return await call_with_timeout(_call(), operation="reveal_audit", timeout_sec=response_timeout_sec)
+            return await call_with_timeout(_call(), operation="submit_audit", timeout_sec=response_timeout_sec)
         except OpponentUnresponsiveError:
             if deadline_clock() - started > watchdog_timeout_sec:
                 raise

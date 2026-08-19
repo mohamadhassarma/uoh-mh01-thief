@@ -1,7 +1,7 @@
 """The response half of the wire contract — split out of protocol.py to keep
 files under the project's ~150-line budget. See protocol.py's module
 docstring for the full context; this half is the RECEIVER's answer to a
-`submit_move` call, never the sender's own claim reflected back.
+`receive_turn` call, never the sender's own claim reflected back.
 """
 
 from __future__ import annotations

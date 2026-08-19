@@ -11,13 +11,23 @@ from __future__ import annotations
 
 from .state import Side
 
-# Provisional: rulebook Ch. 10 does not pin down who moves first. Kept as one
-# named constant, not scattered through the loop, so it is easy to find and
-# renegotiate. See PRD-01 "Open questions". Not book-fixed — PRD-03 (item 10)
-# treats this as a negotiable HOUSE RULE, signed into the handshake `terms`
-# (shared.terms.terms_from_config) so a mismatched opponent implementation
-# refuses to play instead of silently disagreeing on whose turn it is.
-FIRST_MOVER: Side = Side.POLICE
+# The rulebook itself is silent on who moves first (confirmed by direct text
+# search of the book PDF — no "first mover"/"turn order" passage exists) —
+# see PRD-01 "Open questions" for the original provisional choice. Stage-5
+# close-out checked the two available authorities beyond the book: the
+# professor's own reference implementation (`ref_impl/docs/PLAN.md`: "Thief
+# moves first", echoed in its GUI code) and the interop kit's sparring peer
+# (its own banner: "turn order: THIEF moves first — the reference
+# implementation's own behaviour"). Both independently agree with each
+# other and the book does not contradict them, so THIEF is what this engine
+# now uses too — not a negotiable house rule with a provisional default
+# anymore, a corrected one. Previously `Side.POLICE`, which was simply
+# wrong relative to both outside authorities; every self-play test passed
+# anyway because self-play never had disagree with anyone external to catch
+# it. NOT re-added to the signed handshake `terms` (below) — the reference
+# implementation does not sign it either, treating it as fixed engine
+# behaviour rather than a per-match negotiated value.
+FIRST_MOVER: Side = Side.THIEF
 
 # PRD-03 (verified against the book's Table 2 + rules #21/#22, supersedes
 # PRD-01's original symmetric-coordinate-overlap reading): capture-by-

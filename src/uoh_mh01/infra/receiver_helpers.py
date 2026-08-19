@@ -6,6 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..domain import belief as belief_module
+from ..domain.belief import BeliefMap
+from ..domain.board import Board
+from ..domain.hints import fuse_hint_into_belief
+from ..domain.scent import deserialize_field
 from ..domain.state import MatchState, Side
 from .protocol import MoveRequest
 from .protocol_response import MoveResponse
@@ -13,6 +18,18 @@ from .protocol_response import MoveResponse
 
 def sender_position(state: MatchState, sender: Side):
     return state.cop_pos if sender is Side.POLICE else state.thief_pos
+
+
+def absorb_opponent_signals(belief: BeliefMap, board: Board, request: MoveRequest) -> BeliefMap:
+    """PRD-04/PRD-05: fold the opponent's own trail and hint (never its
+    true position) into belief. The hint's self-declared truth/lie verdict
+    is unverifiable live, so it is ignored here — fixed, modest trust
+    weight regardless (domain.hints.DEFAULT_HINT_TRUST_WEIGHT)."""
+    if request.smell_grid:
+        belief = belief_module.update_from_scent(belief, deserialize_field(request.smell_grid), board)
+    if request.hint:
+        belief = fuse_hint_into_belief(belief, board, request.hint)
+    return belief
 
 
 def early_response(runtime: Any, request: MoveRequest) -> MoveResponse | None:

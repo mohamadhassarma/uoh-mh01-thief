@@ -18,6 +18,7 @@ from typing import Any
 
 from .peer_config_errors import PeerConfigError
 from .peer_config_validators import (
+    optional_str,
     optional_str_dict,
     optional_str_list,
     require_positive_int,
@@ -41,6 +42,13 @@ class PeerConfig:
     # TODO.md's admin checklist still has "fill team member IDs" open.
     members: tuple[str, ...] = ()
     repos: dict[str, str] = field(default_factory=dict)
+    # PRD-05: "package.module:ClassName" pointing at a BrainBase subclass to
+    # play THIS role. None (the default) falls back to the shipped random
+    # baseline — see cli_commands.py. Optional, private, per-peer: it is
+    # never part of the signed contract (two teams may run different
+    # strategy code against the same signed terms).
+    police_class: str | None = None
+    thief_class: str | None = None
 
 
 def _load_toml(path: str | Path) -> dict[str, Any]:
@@ -97,6 +105,8 @@ def parse_peer_config(role: str, private: dict[str, Any], signed: dict[str, Any]
         turn_timeout_seconds=require_positive_number(effective, "network.turn_timeout_seconds"),
         members=optional_str_list(effective, "game.members"),
         repos=optional_str_dict(effective, "game.repos"),
+        police_class=optional_str(effective, "strategy.police_class"),
+        thief_class=optional_str(effective, "strategy.thief_class"),
     )
 
 

@@ -107,7 +107,7 @@ def test_same_field_computed_in_a_fresh_subprocess_is_byte_identical(config, tmp
         "from uoh_mh01.domain.canonical import canonical_json\n"
         "from uoh_mh01.domain.scent import advance_field, emit, serialize_field\n"
         "from uoh_mh01.domain.config_models import PheromoneConfig\n"
-        "pheromones = PheromoneConfig(center_intensity=0.9, decay=0.1, grid_size=5)\n"
+        "pheromones = PheromoneConfig(center_intensity=0.9, decay=0.1, grid_size=5, min_center_intensity=0.5)\n"
         "board = Board(grid_size=7)\n"
         "field = advance_field({}, emit(Position(3, 3), board, pheromones), pheromones)\n"
         "print(canonical_json(serialize_field(field)), end='')\n",

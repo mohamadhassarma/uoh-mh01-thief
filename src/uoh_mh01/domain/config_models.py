@@ -52,6 +52,15 @@ class PheromoneConfig:
     center_intensity: float
     decay: float
     grid_size: int
+    # `pheromone_min_center_intensity` (wire: `min_center_intensity`) — part
+    # of the CORE `terms_signature` vector (interop kit / reference
+    # implementation) but not consumed by this engine's own scent math
+    # (domain/scent.py's clamp is [0.0, center_intensity] already); the
+    # reference implementation declares it unused too. Signed and carried
+    # anyway, stage-5 close-out: a term two independent authorities both
+    # pin must round-trip byte-identical even if this engine has nothing to
+    # do with the number yet.
+    min_center_intensity: float
 
 
 @dataclass(frozen=True)
