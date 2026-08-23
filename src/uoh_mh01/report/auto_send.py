@@ -37,6 +37,16 @@ from .result_artifact import missing_mandatory_fields
 logger = logging.getLogger(__name__)
 
 
+# Where a REHEARSAL's interlock rows go. Deliberately not `league/` — the real
+# ledger is committed evidence of counted play, and a rehearsal must not leave
+# a row there that would later block a genuine send for the same series.
+REHEARSAL_LEDGER_NAME = "rehearsal_ledger.json"
+
+# Statuses that stop another attempt. `failed` is absent on purpose — see the
+# comment at the check itself.
+BLOCKING_STATUSES = frozenset({ledger.STATUS_SENT, ledger.STATUS_SENDING})
+
+
 @dataclass
 class AutoSendOutcome:
     sent: bool
@@ -45,6 +55,8 @@ class AutoSendOutcome:
     result_path: Path | None = None
     message_id: str | None = None
     game_uid: str | None = None
+    rehearsal: bool = False
+    recipient: str | None = None
 
 
 def blocking_reasons(result: dict[str, Any], *, ledger_path: Path) -> list[str]:
@@ -66,44 +78,82 @@ def send_counted_series(
     config: GameConfig,
     *,
     own_group_id: str,
+    counted: bool = True,
     sender: str = "me",
     ledger_path: Path = ledger.LEDGER_PATH,
+    to: str | None = None,
     service: Any = None,
 ) -> AutoSendOutcome:
     """Build, check, and mail this series' report. Called by the peer process
-    itself at the end of a COUNTED series — never by a human."""
+    itself at the end of a series — never by a human.
+
+    `to` makes this a REHEARSAL: identical code, identical Gatekeeper,
+    identical interlock, different recipient and a different file for the
+    interlock rows. The REPORT ITSELF is still built against the real ledger,
+    so `first_meeting_between_groups` and `games_played_including_this` come
+    out exactly as a genuine run would produce them — a rehearsal that
+    silently reported different numbers would not be a rehearsal of anything.
+    """
+    rehearsal = to is not None
+    # Read the real ledger for report CONTENT; divert only the write side.
+    record_path = (logs_dir / REHEARSAL_LEDGER_NAME) if rehearsal else ledger_path
     result = pipeline.build(logs_dir, game_id, config, ledger_path=ledger_path)
     path = pipeline.write(result, logs_dir)
     game_uid = result["game_uid"]
 
-    existing = ledger.find(game_uid, path=ledger_path)
-    if existing is not None:
-        # Covers `sent` AND a row stranded at `sending` by a killed process.
-        # Refusing an in-flight-looking row is the safe side of the trade: a
-        # missed send is recoverable by hand, a duplicate is not recallable.
+    existing = ledger.find(game_uid, path=record_path)
+    if existing is not None and existing.get("status") in BLOCKING_STATUSES:
+        # `sent` is obvious. `sending` covers a row stranded by a process killed
+        # mid-send: a missed send is recoverable by hand, a duplicate is not
+        # recallable, so an in-flight-looking row is the safe side of the trade.
+        #
+        # `failed` deliberately does NOT block. Nothing was delivered, and
+        # retrying is exactly what the manual fallback exists for — a failed row
+        # that blocked every retry would make that documented path impossible,
+        # which is how this was found: a rehearsal refused for a bad `--to`
+        # locked out the corrected one.
         reason = f"the ledger already holds a {existing.get('status')!r} row for game_uid {game_uid}"
         logger.warning("NOT auto-sending: %s", reason)
-        return AutoSendOutcome(sent=False, reason=reason, result_path=path, game_uid=game_uid)
+        return AutoSendOutcome(sent=False, reason=reason, result_path=path, game_uid=game_uid, rehearsal=rehearsal)
 
-    blockers = blocking_reasons(result, ledger_path=ledger_path)
+    blockers = blocking_reasons(result, ledger_path=record_path)
     if blockers:
-        logger.error("NOT auto-sending the counted report — %s blocker(s): %s", len(blockers), "; ".join(blockers))
+        logger.error("NOT auto-sending the report — %s blocker(s): %s", len(blockers), "; ".join(blockers))
         return AutoSendOutcome(
-            sent=False, reason="the report is not fit to send", blockers=blockers, result_path=path, game_uid=game_uid
+            sent=False,
+            reason="the report is not fit to send",
+            blockers=blockers,
+            result_path=path,
+            game_uid=game_uid,
+            rehearsal=rehearsal,
         )
 
     opponent = next((g for g in result["groups"] if g != own_group_id), None)
-    _record(result, opponent, ledger.STATUS_SENDING, ledger_path, detail=None)
+    _record(result, opponent, ledger.STATUS_SENDING, record_path, detail="rehearsal" if rehearsal else None)
     try:
-        sent = pipeline.send_report(path, result, config, counted=True, sender=sender, service=service)
+        # `counted` is passed through UNCHANGED, not derived from `rehearsal`:
+        # a rehearsal of a counted run must take the counted branch everywhere
+        # it exists, so the only difference anywhere is the recipient.
+        sent = pipeline.send_report(
+            path, result, config, counted=counted, sender=sender, to=to, service=service
+        )
     except Exception as exc:  # noqa: BLE001 - recorded, then surfaced to the operator
-        _record(result, opponent, ledger.STATUS_FAILED, ledger_path, detail=str(exc)[:300])
+        _record(result, opponent, ledger.STATUS_FAILED, record_path, detail=str(exc)[:300])
         logger.error("automatic report send FAILED: %s", exc)
-        return AutoSendOutcome(sent=False, reason=f"send failed: {exc}", result_path=path, game_uid=game_uid)
+        return AutoSendOutcome(
+            sent=False, reason=f"send failed: {exc}", result_path=path, game_uid=game_uid, rehearsal=rehearsal
+        )
 
-    _record(result, opponent, ledger.STATUS_SENT, ledger_path, detail=None)
-    logger.info("automatic report sent for %s (message id %s)", game_id, sent.get("id"))
-    return AutoSendOutcome(sent=True, result_path=path, message_id=sent.get("id"), game_uid=game_uid)
+    _record(result, opponent, ledger.STATUS_SENT, record_path, detail="rehearsal" if rehearsal else None)
+    logger.info("%s report sent for %s (message id %s)", "REHEARSAL" if rehearsal else "automatic", game_id, sent.get("id"))
+    return AutoSendOutcome(
+        sent=True,
+        result_path=path,
+        message_id=sent.get("id"),
+        game_uid=game_uid,
+        rehearsal=rehearsal,
+        recipient=to,
+    )
 
 
 def _record(result: dict[str, Any], opponent: str | None, status: str, path: Path, *, detail: str | None) -> None:

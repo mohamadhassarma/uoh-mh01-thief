@@ -132,13 +132,11 @@ def test_to_sends_to_the_named_address_on_a_practice_run():
     assert resolve_recipient(counted=False, override="me@example.com") == "me@example.com"
 
 
-def test_counted_with_to_is_refused_not_merely_warned():
-    """A counted report going anywhere but the lecturer is a lost game, and it
-    is silent at the moment it happens — only visible at grading."""
-    from uoh_mh01.infra.gmail_sender import MisdirectedReportError
-
-    with pytest.raises(MisdirectedReportError, match="nowhere else"):
-        resolve_recipient(counted=True, override="me@example.com")
+def test_counted_with_to_is_a_rehearsal_not_a_submission():
+    """`--to` makes ANY run a rehearsal. This is the only way to exercise the
+    automatic §9.3 send at all: its sole trigger is a counted run, and a
+    counted run mails the lecturer."""
+    assert resolve_recipient(counted=True, override="me@example.com") == "me@example.com"
 
 
 def test_counted_without_to_still_reaches_the_lecturer():
@@ -157,17 +155,32 @@ def test_counted_without_to_still_reaches_the_lecturer():
         "  rmisegal+x@gmail.com  ",
     ],
 )
-def test_to_cannot_be_used_as_a_back_door_to_the_lecturer(spelling):
+@pytest.mark.parametrize("counted", [True, False])
+def test_to_cannot_be_used_as_a_back_door_to_the_lecturer(spelling, counted):
     """Gmail ignores dots and everything after `+`, so a plain string compare
     would let `--to` reach the very mailbox the practice gate exists to
     protect — turning the safety flag into the bypass."""
     from uoh_mh01.infra.gmail_sender import MisdirectedReportError
 
     with pytest.raises(MisdirectedReportError, match="lecturer's mailbox"):
-        resolve_recipient(counted=False, override=spelling)
+        resolve_recipient(counted=counted, override=spelling)
 
 
 def test_an_ordinary_address_that_merely_resembles_the_lecturer_is_allowed():
     """The guard must not be so broad it blocks real addresses."""
     for address in ("rmisegal@example.com", "notrmisegal@gmail.com", "rmisegal2@gmail.com"):
         assert resolve_recipient(counted=False, override=address) == address
+        assert resolve_recipient(counted=True, override=address) == address
+
+
+def test_only_a_counted_run_with_no_override_reaches_the_lecturer():
+    """The whole safety property in one assertion: exactly one input
+    combination produces the reporting address."""
+    combinations = {
+        (True, None): LECTURER_REPORT_ADDRESS,
+        (False, None): UNREACHABLE_ADDRESS,
+        (True, "me@example.com"): "me@example.com",
+        (False, "me@example.com"): "me@example.com",
+    }
+    for (counted, override), expected in combinations.items():
+        assert resolve_recipient(counted=counted, override=override) == expected

@@ -48,48 +48,58 @@ def cmd_report(args) -> int:
 
 
 def _send(path: Path, result: dict, config, args) -> int:
-    if args.counted:
-        return _manual_fallback(result, config, args)
-    # A PRACTICE send: not counted, never the lecturer, never the ledger. The
-    # blocking rules deliberately do not apply — inspecting a broken report by
-    # mailing it to yourself is exactly what practice is for.
-    try:
-        sent = pipeline.send_report(path, result, config, counted=False, sender=args.sender, to=args.to)
-    except Exception as exc:  # noqa: BLE001 - a CLI must print, not traceback
-        print(f"\nsend failed: {exc}", file=sys.stderr)
-        return 4
-    print(f"sent to {args.to} (gmail message id {sent.get('id')})")
-    return 0
+    """Every send from here goes through `auto_send.send_counted_series` — the
+    same entry point the peer process uses at the end of a series.
 
-
-def _manual_fallback(result: dict, config, args) -> int:
-    """`report --counted` is the FALLBACK path, and it routes through the SAME
-    `auto_send.send_counted_series` the peer process uses.
-
-    Book §9.3 requires the agent to mail its own report with no human step, so
-    reaching here by hand means the automatic send did not happen — say so
-    loudly rather than letting a manual send look like the normal route. Going
-    through one shared entry point is what makes the ledger interlock
-    universal: an earlier version wrote the ledger row itself, from here, and
-    that row was missing the status the duplicate-send check reads, so a second
-    manual send would not have been blocked at all.
+    There is deliberately no second implementation. An earlier version had one,
+    and it wrote its own ledger row without the status the duplicate-send check
+    reads, so a repeat manual send would not have been blocked at all.
     """
+    if args.counted and not args.to:
+        _fallback_banner()
+    elif args.to:
+        _rehearsal_banner(args.counted, args.to)
+
+    outcome = auto_send.send_counted_series(
+        Path(args.log_dir or "logs"),
+        result["game_id"],
+        config,
+        own_group_id=args.group_id,
+        counted=args.counted,
+        sender=args.sender,
+        to=args.to,
+    )
+    if outcome.sent:
+        print(f"sent to {outcome.recipient or LECTURER_REPORT_ADDRESS} (gmail message id {outcome.message_id})")
+        if outcome.rehearsal:
+            print("REHEARSAL ONLY - the lecturer received nothing and the league ledger is untouched.")
+        return 0
+    print(f"\nNOT SENT: {outcome.reason}", file=sys.stderr)
+    for blocker in outcome.blockers:
+        print(f"  - {blocker}", file=sys.stderr)
+    return 3
+
+
+def _fallback_banner() -> None:
+    """Book §9.3 requires the peer process to send its own report with no human
+    step, so reaching a real submission by hand means the automatic send did
+    not happen — say so loudly rather than letting it look like the normal
+    route."""
     print("\n" + "=" * 72, file=sys.stderr)
     print("MANUAL FALLBACK: book section 9.3 requires the peer process to send this", file=sys.stderr)
     print("report automatically at the end of a counted series. You are sending it by", file=sys.stderr)
     print("hand, which means the automatic send did not happen. Worth finding out why.", file=sys.stderr)
     print("=" * 72, file=sys.stderr)
 
-    outcome = auto_send.send_counted_series(
-        Path(args.log_dir or "logs"), result["game_id"], config, own_group_id=args.group_id, sender=args.sender
-    )
-    if outcome.sent:
-        print(f"sent to {LECTURER_REPORT_ADDRESS} (gmail message id {outcome.message_id})")
-        return 0
-    print(f"\nNOT SENT: {outcome.reason}", file=sys.stderr)
-    for blocker in outcome.blockers:
-        print(f"  - {blocker}", file=sys.stderr)
-    return 3
+
+def _rehearsal_banner(counted: bool, to: str) -> None:
+    kind = "COUNTED" if counted else "FRIENDLY"
+    print("\n" + "*" * 72)
+    print(f"REHEARSAL - this is NOT a submission. {kind} report, --to {to}")
+    print("The full automatic path runs (auto_send, Gatekeeper, ledger interlock),")
+    print("but delivery goes to the address above and NOT to the lecturer, and the")
+    print("committed league ledger is not written. Nothing here counts for grading.")
+    print("*" * 72)
 
 
 def _warn_on_missing_mandatory_fields(result: dict) -> None:

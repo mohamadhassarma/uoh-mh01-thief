@@ -136,27 +136,55 @@ def cmd_peer(args: argparse.Namespace) -> int:
 
 def _report_counted_series(args, config, peer_config, summaries, out_dir) -> None:
     """Book §9.3: at the end of a counted series the agent mails its own report,
-    with no human step. A friendly sends nothing to anyone.
+    with no human step.
+
+    `--to` turns any series — counted or friendly — into a REHEARSAL of that
+    same path: same auto_send, same Gatekeeper, same interlock, delivered
+    elsewhere. Without it a friendly sends nothing to anyone.
 
     Deliberately not fatal. The games were played and their artifacts are on
     disk; a failed send is recoverable with `report --counted`, whereas
     crashing here would lose the printed summary of a series that really
     happened.
     """
-    if not getattr(args, "counted", False) or not summaries:
+    counted = getattr(args, "counted", False)
+    to = getattr(args, "to", None)
+    if not summaries or not (counted or to):
         return
     from .report import auto_send
 
     print()
-    print("COUNTED series complete - sending the report automatically (book section 9.3)...")
+    if to:
+        _rehearsal_banner(counted, to)
+    else:
+        print("COUNTED series complete - sending the report automatically (book section 9.3)...")
+
     outcome = auto_send.send_counted_series(
-        Path(out_dir), summaries[0]["game_id"], config, own_group_id=peer_config.group_id
+        Path(out_dir),
+        summaries[0]["game_id"],
+        config,
+        own_group_id=peer_config.group_id,
+        counted=counted,
+        to=to,
     )
     if outcome.sent:
-        print(f"  sent to the lecturer (gmail message id {outcome.message_id})")
+        where = outcome.recipient or "the lecturer"
+        print(f"  sent to {where} (gmail message id {outcome.message_id})")
+        if outcome.rehearsal:
+            print("  REHEARSAL ONLY - the lecturer received nothing and the league ledger is untouched.")
         return
     print(f"  NOT SENT: {outcome.reason}")
     for blocker in outcome.blockers:
         print(f"    - {blocker}")
     print("  The artifacts are on disk. Fix the cause, then use the manual fallback:")
     print(f"    uoh-mh01 report --game-id {summaries[0]['game_id']} --counted")
+
+
+def _rehearsal_banner(counted: bool, to: str) -> None:
+    kind = "COUNTED" if counted else "FRIENDLY"
+    print("*" * 72)
+    print(f"REHEARSAL - this is NOT a submission. {kind} series, --to {to}")
+    print("The full automatic path runs (auto_send, Gatekeeper, ledger interlock),")
+    print("but delivery goes to the address above and NOT to the lecturer, and the")
+    print("committed league ledger is not written. Nothing here counts for grading.")
+    print("*" * 72)

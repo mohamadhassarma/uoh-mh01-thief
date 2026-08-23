@@ -83,28 +83,31 @@ def is_lecturer(address: str) -> bool:
 
 
 def resolve_recipient(*, counted: bool, override: str | None = None) -> str:
-    """The lecturer's address is produced by exactly one branch here, and only
-    for a counted run with no override.
+    """`override` (`--to`) makes ANY run a REHEARSAL, counted or not.
 
-    `--to` deliberately cannot widen that. A counted report sent anywhere but
-    the lecturer is a lost game, and a practice report sent TO the lecturer is
-    a false submission — so the two dangerous combinations are refused rather
-    than warned about. Warning is not enough for either: both are silent at the
-    moment they happen and only visible at grading.
+    The lecturer's address is produced by exactly one branch: a counted run
+    with NO override. That is what a real submission is, and it stays the
+    default — omitting `--to` is what you do by accident, not what you type.
+
+    A rehearsal exists because the automatic §9.3 send is otherwise
+    untestable: the only trigger is a counted run, and a counted run mails the
+    lecturer. `--counted --to X` therefore runs the FULL automatic path —
+    same `auto_send`, same Gatekeeper, same ledger interlock — and only
+    changes where the mail lands. A separate "test mode" that skipped any of
+    that would prove nothing about the path that matters.
+
+    The one absolute rule left: an override may never resolve to the
+    lecturer's mailbox, in either mode. A rehearsal arriving at the reporting
+    address is a false submission, and it is silent at the moment it happens
+    and visible only at grading.
     """
     if override is None:
         return LECTURER_REPORT_ADDRESS if counted else UNREACHABLE_ADDRESS
-    if counted:
-        raise MisdirectedReportError(
-            f"refusing --counted with --to {override!r}: a counted report goes to the lecturer "
-            f"({LECTURER_REPORT_ADDRESS}) and nowhere else. Drop --to to send it there, "
-            "or drop --counted to practise against your own address."
-        )
     if is_lecturer(override):
         raise MisdirectedReportError(
-            f"refusing --to {override!r}: that is the lecturer's mailbox, and this run is not counted. "
-            "A practice report arriving at the reporting address is a false submission. "
-            "Use --counted (with no --to) when you genuinely mean to submit."
+            f"refusing --to {override!r}: that is the lecturer's mailbox, and --to always means a "
+            "REHEARSAL. A rehearsal arriving at the reporting address is a false submission. "
+            "Use --counted with NO --to when you genuinely mean to submit."
         )
     return override
 

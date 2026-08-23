@@ -33,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     # A counted series REFUSES to start on a dirty tree; a friendly only warns
     # (book ch.5 / App. E rules 37/38 — see shared/build_commit.py).
     peer.add_argument("--counted", action="store_true", help="This series is COUNTED: refuse to start unless the tree is clean")
+    # REHEARSAL. Runs the full automatic §9.3 send at series end and delivers
+    # to this address instead of the lecturer. Works with or without --counted;
+    # never accepts the lecturer's own mailbox.
+    peer.add_argument("--to", default=None, help="Rehearse the automatic send, delivering to this address")
     peer.set_defaults(func=cmd_peer)
 
     report = subparsers.add_parser("report", help="Build result_<game_id>.json from a played series (PRD-07)")
@@ -47,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--counted", action="store_true", help="This is a COUNTED series: mail it to the lecturer")
     # Exercising the real send path without submitting. Refused together with
     # --counted: a counted report going anywhere but the lecturer is a lost game.
-    report.add_argument("--to", default=None, help="Send to this address instead (practice only; refused with --counted)")
+    report.add_argument("--to", default=None, help="REHEARSAL: run the full automatic path, deliver here instead of the lecturer")
     report.set_defaults(func=cmd_report)
 
     authorize = subparsers.add_parser("authorize-gmail", help="Run the OAuth consent flow once (opens a browser)")
