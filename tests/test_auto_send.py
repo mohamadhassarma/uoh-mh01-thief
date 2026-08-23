@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from uoh_mh01.domain.config import load_config
 from uoh_mh01.report import auto_send, ledger
 from uoh_mh01.report.auto_send import blocking_reasons, send_counted_series
@@ -250,11 +248,11 @@ def test_a_complete_report_has_no_gaps(tmp_path):
     assert blocking_reasons(result, ledger_path=tmp_path / "counted_games.json") == []
 
 
-# --- friendlies never auto-send -------------------------------------------------
+# --- a friendly sends nothing unless it is told where ---------------------------
 
 
-def test_the_peer_command_only_reports_when_the_series_was_counted(monkeypatch):
-    """A friendly owes no report to anyone (App. E rule 52), so the automatic
+def test_a_friendly_with_no_to_sends_nothing_at_all(monkeypatch):
+    """A warm-up owes no report to anyone (App. E rule 52), so the automatic
     path must not even be entered."""
     import argparse
 
@@ -264,21 +262,28 @@ def test_the_peer_command_only_reports_when_the_series_was_counted(monkeypatch):
     monkeypatch.setattr(auto_send, "send_counted_series", lambda *a, **k: called.append(1))
     summaries = [{"game_id": "them-vs-us", "sub_game_number": 1}]
 
-    cli_commands._report_counted_series(
-        argparse.Namespace(counted=False), CONFIG, object(), summaries, Path(".")
+    ok = cli_commands._send_series_report(
+        argparse.Namespace(counted=False, to=None), CONFIG, object(), summaries, Path(".")
     )
     assert called == []
+    assert ok is True
 
 
-def test_an_aborted_series_with_no_summaries_reports_nothing(monkeypatch):
+def test_an_aborted_counted_series_is_a_loud_failure(monkeypatch, capsys):
+    """No sub-games means nothing to build a report from. For a COUNTED series
+    that is a lost game, so it must be loud and it must not report success."""
     import argparse
 
     from uoh_mh01 import cli_commands
 
     called = []
     monkeypatch.setattr(auto_send, "send_counted_series", lambda *a, **k: called.append(1))
-    cli_commands._report_counted_series(argparse.Namespace(counted=True), CONFIG, object(), [], Path("."))
+    ok = cli_commands._send_series_report(
+        argparse.Namespace(counted=True, to=None), CONFIG, object(), [], Path(".")
+    )
     assert called == []
+    assert ok is False
+    assert "WAS NOT REPORTED" in capsys.readouterr().err
 
 
 def test_every_summary_carries_the_game_id_the_send_needs():
@@ -330,24 +335,23 @@ def test_the_lecturer_address_is_the_fixed_destination(tmp_path):
     assert message_from_bytes(raw)["To"] == LECTURER_REPORT_ADDRESS
 
 
-# --- rehearsal: the same path, a different mailbox ------------------------------
+# --- a friendly is the same path with a different mailbox -----------------------
 
 
-def _rehearse(tmp_path, service, *, counted, to="me@example.com"):
+def _friendly(tmp_path, service, to="me@example.com"):
     return send_counted_series(
         tmp_path,
         "them-vs-us",
         CONFIG,
         own_group_id="uoh-mh01",
-        counted=counted,
+        counted=False,
         ledger_path=tmp_path / "counted_games.json",
         to=to,
         service=service,
     )
 
 
-@pytest.mark.parametrize("counted", [True, False])
-def test_a_rehearsal_delivers_to_the_named_address(tmp_path, counted):
+def test_a_friendly_delivers_to_the_named_address(tmp_path):
     import base64
     from email import message_from_bytes
 
@@ -355,87 +359,78 @@ def test_a_rehearsal_delivers_to_the_named_address(tmp_path, counted):
 
     _series(tmp_path)
     service = StubGmail()
-    outcome = _rehearse(tmp_path, service, counted=counted)
+    outcome = _friendly(tmp_path, service)
 
     assert outcome.sent, outcome.reason
-    assert outcome.rehearsal is True
+    assert outcome.counted is False
     raw = base64.urlsafe_b64decode(service.sends[0]["raw"])
     recipient = message_from_bytes(raw)["To"]
     assert recipient == "me@example.com"
     assert recipient != LECTURER_REPORT_ADDRESS
 
 
-@pytest.mark.parametrize("counted", [True, False])
-def test_a_rehearsal_never_writes_the_committed_league_ledger(tmp_path, counted):
-    """The rehearsal must not leave a row that blocks a genuine send later."""
+def test_a_friendly_never_writes_the_committed_league_ledger(tmp_path):
+    """`league/` is committed evidence of COUNTED play. A warm-up row there
+    would make the next real series against that opponent declare
+    `first_meeting_between_groups` wrongly - a rules-37/38 false declaration
+    that App. E rule 35 charges to the innocent opponent too."""
     _series(tmp_path)
     real_ledger = tmp_path / "counted_games.json"
-    assert _rehearse(tmp_path, StubGmail(), counted=counted).sent
+    assert _friendly(tmp_path, StubGmail()).sent
     assert not real_ledger.exists()
-    assert not ledger.already_reported("uid-1234", path=real_ledger)
 
 
-def test_a_rehearsal_still_exercises_the_interlock_in_its_own_file(tmp_path):
-    """Diverted, not disabled — otherwise the rehearsal would not be
-    rehearsing the interlock at all."""
+def test_a_friendly_does_not_block_the_counted_send_that_follows(tmp_path):
+    """Practise, then really submit."""
     _series(tmp_path)
     service = StubGmail()
-    assert _rehearse(tmp_path, service, counted=True).sent
+    assert _friendly(tmp_path, service).sent
 
-    rehearsal_ledger = tmp_path / auto_send.REHEARSAL_LEDGER_NAME
-    assert ledger.find("uid-1234", path=rehearsal_ledger)["status"] == ledger.STATUS_SENT
-    second = _rehearse(tmp_path, service, counted=True)
-    assert not second.sent
-    assert len(service.sends) == 1
-
-
-def test_a_rehearsal_does_not_block_the_genuine_send_that_follows(tmp_path):
-    """The point of item 1: rehearse, then really submit."""
-    _series(tmp_path)
-    service = StubGmail()
-    assert _rehearse(tmp_path, service, counted=True).sent
-
-    real = send_counted_series(
-        tmp_path,
-        "them-vs-us",
-        CONFIG,
-        own_group_id="uoh-mh01",
-        counted=True,
-        ledger_path=tmp_path / "counted_games.json",
-        service=service,
-    )
+    real = _send(tmp_path, service, counted=True)
     assert real.sent, real.reason
-    assert real.rehearsal is False
+    assert real.counted is True
     assert ledger.already_reported("uid-1234", path=tmp_path / "counted_games.json")
     assert len(service.sends) == 2
 
 
-def test_a_rehearsal_reports_the_same_numbers_a_real_run_would(tmp_path):
-    """It reads the REAL ledger for report content, so first_meeting and the
-    game count are not quietly different — otherwise it rehearses nothing."""
+def test_a_friendly_may_be_sent_more_than_once(tmp_path):
+    """The interlock is about counted evidence, not about mail. Re-sending a
+    practice report is a legitimate thing to want, and a runaway loop is the
+    Gatekeeper's job, which a friendly shares."""
+    _series(tmp_path)
+    service = StubGmail()
+    assert _friendly(tmp_path, service).sent
+    assert _friendly(tmp_path, service).sent
+    assert len(service.sends) == 2
+
+
+def test_a_friendly_reports_the_same_numbers_a_counted_run_would(tmp_path):
+    """It reads the REAL ledger for report CONTENT, so first_meeting and the
+    game count are not quietly different - otherwise it rehearses nothing."""
     _series(tmp_path)
     real_ledger = tmp_path / "counted_games.json"
     ledger.record_counted_series(
         opponent_group_id="them", game_id="older", game_uid="uid-older", ended_at="x", path=real_ledger
     )
-    rehearsed = _rehearse(tmp_path, StubGmail(), counted=True)
-    result = json.loads(rehearsed.result_path.read_text(encoding="utf-8"))
-    final = result["final_result"]
+    outcome = _friendly(tmp_path, StubGmail())
+    final = json.loads(outcome.result_path.read_text(encoding="utf-8"))["final_result"]
     # A prior counted series against `them` exists, so this is NOT a first
-    # meeting and our own count is 2 — exactly what a real run would say.
+    # meeting and our own count is 2 - exactly what a counted run would say.
     assert final["first_meeting_between_groups"] is False
     assert final["games_played_including_this"]["uoh-mh01"] == 2
 
 
-def test_a_rehearsal_still_refuses_a_bad_report(tmp_path):
+def test_a_friendly_still_refuses_a_bad_report(tmp_path):
+    """Same refusal rules either way: a friendly that happily mailed a report
+    the counted path would reject would prove nothing about the counted path."""
     _series(tmp_path, passed=False)
     service = StubGmail()
-    outcome = _rehearse(tmp_path, service, counted=True)
+    outcome = _friendly(tmp_path, service)
     assert not outcome.sent
     assert service.sends == []
 
 
-def test_a_rehearsal_is_still_gatekeeper_wrapped(tmp_path, monkeypatch):
+def test_a_friendly_is_still_gatekeeper_wrapped(tmp_path, monkeypatch):
     from uoh_mh01.report import pipeline
 
     executed = []
@@ -448,43 +443,8 @@ def test_a_rehearsal_is_still_gatekeeper_wrapped(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pipeline, "Gatekeeper", Spy)
     _series(tmp_path)
-    assert _rehearse(tmp_path, StubGmail(), counted=True).sent
+    assert _friendly(tmp_path, StubGmail()).sent
     assert executed == ["gmail"]
-
-
-def test_a_friendly_with_no_to_still_sends_nothing(monkeypatch):
-    import argparse
-
-    from uoh_mh01 import cli_commands
-
-    called = []
-    monkeypatch.setattr(auto_send, "send_counted_series", lambda *a, **k: called.append(k))
-    cli_commands._report_counted_series(
-        argparse.Namespace(counted=False, to=None), CONFIG, object(), [{"game_id": "g"}], Path(".")
-    )
-    assert called == []
-
-
-@pytest.mark.parametrize("counted", [True, False])
-def test_the_peer_command_rehearses_when_to_is_given(monkeypatch, counted):
-    import argparse
-
-    from uoh_mh01 import cli_commands
-
-    class _Peer:
-        group_id = "uoh-mh01"
-
-    called = []
-    monkeypatch.setattr(
-        auto_send,
-        "send_counted_series",
-        lambda *a, **k: called.append(k) or auto_send.AutoSendOutcome(sent=True, rehearsal=True, recipient=k["to"]),
-    )
-    cli_commands._report_counted_series(
-        argparse.Namespace(counted=counted, to="me@example.com"), CONFIG, _Peer(), [{"game_id": "g"}], Path(".")
-    )
-    assert called and called[0]["to"] == "me@example.com"
-    assert called[0]["counted"] is counted
 
 
 def test_a_failed_send_can_be_retried_but_a_sent_one_cannot(tmp_path):

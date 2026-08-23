@@ -15,6 +15,23 @@ from .cli_commands import DEFAULT_CONFIG_PATH, cmd_peer, cmd_selftest
 from .cli_report import cmd_authorize_gmail, cmd_report
 
 
+def _recipient_modes(parser: argparse.ArgumentParser, *, counted_help: str) -> None:
+    """The report's two mutually exclusive destinations.
+
+    `--counted` is NOT a boolean convenience. Without it the recipient resolves
+    to an address that cannot be delivered at all, so a warm-up has nowhere to
+    go even if every other check were bypassed (PRD-07).
+
+    `--to` is the friendly destination and the way to exercise the real
+    automatic path without submitting anything. It is refused alongside
+    `--counted` here, at parse time, because the alternative is discovering the
+    conflict after a full counted series has been played out.
+    """
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--counted", action="store_true", help=counted_help)
+    modes.add_argument("--to", default=None, help="FRIENDLY: mail the report to this address instead (never the lecturer)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="uoh_mh01")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -30,13 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     peer.add_argument("--peer-config", type=Path, default=None, help="Path to config/<role>/game.toml (default: derived from --role)")
     peer.add_argument("--log-dir", type=Path, default=None, help="Directory to write the series' JSON artifacts into (default: logs/)")
     peer.add_argument("--seed", type=int, default=None, help="RNG seed for reproducible placeholder move selection")
-    # A counted series REFUSES to start on a dirty tree; a friendly only warns
-    # (book ch.5 / App. E rules 37/38 — see shared/build_commit.py).
-    peer.add_argument("--counted", action="store_true", help="This series is COUNTED: refuse to start unless the tree is clean")
-    # REHEARSAL. Runs the full automatic §9.3 send at series end and delivers
-    # to this address instead of the lecturer. Works with or without --counted;
-    # never accepts the lecturer's own mailbox.
-    peer.add_argument("--to", default=None, help="Rehearse the automatic send, delivering to this address")
+    # Both modes run the same automatic §9.3 send at the end of the series and
+    # differ only in the recipient, so they are mutually exclusive by
+    # construction: argparse refuses the pair before a single sub-game is
+    # played, rather than after a whole series has been spent.
+    _recipient_modes(peer, counted_help="This series is COUNTED: mail the report to the lecturer (requires a clean tree)")
     peer.set_defaults(func=cmd_peer)
 
     report = subparsers.add_parser("report", help="Build result_<game_id>.json from a played series (PRD-07)")
@@ -45,13 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--log-dir", type=Path, default=None, help="Where the series artifacts live (default: logs/)")
     report.add_argument("--group-id", default="uoh-mh01", help="This group's id, used to identify the opponent")
     report.add_argument("--sender", default="me", help="The From address for the report mail")
-    # NOT a boolean convenience. Without it the recipient resolves to an
-    # address that cannot be delivered at all, so a warm-up has nowhere to go
-    # even if every other check were bypassed (PRD-07).
-    report.add_argument("--counted", action="store_true", help="This is a COUNTED series: mail it to the lecturer")
-    # Exercising the real send path without submitting. Refused together with
-    # --counted: a counted report going anywhere but the lecturer is a lost game.
-    report.add_argument("--to", default=None, help="REHEARSAL: run the full automatic path, deliver here instead of the lecturer")
+    _recipient_modes(report, counted_help="This is a COUNTED series: mail it to the lecturer")
     report.set_defaults(func=cmd_report)
 
     authorize = subparsers.add_parser("authorize-gmail", help="Run the OAuth consent flow once (opens a browser)")

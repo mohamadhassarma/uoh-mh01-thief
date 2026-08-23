@@ -131,60 +131,82 @@ def cmd_peer(args: argparse.Namespace) -> int:
         # verdict on me never crosses back (docs/WIRE.md §5).
         print(f"  Audit of opponent by me: {summary['audit_of_opponent_by_me']}")
     print(f"\nArtifacts written to: {out_dir}")
-    return 0
+    # Book section 9.3: the agent mails its own report, here, with no human
+    # step. This call is the whole point of the automatic path - an earlier
+    # version defined the helper below and never called it, so a counted series
+    # played to completion and sent nothing, silently, with no banner and no
+    # reason. test_cli_peer_entry.py now drives cmd_peer itself rather than the
+    # helper, so that cannot recur unnoticed.
+    return 0 if _send_series_report(args, config, peer_config, summaries, out_dir) else 4
 
 
-def _report_counted_series(args, config, peer_config, summaries, out_dir) -> None:
-    """Book §9.3: at the end of a counted series the agent mails its own report,
-    with no human step.
+def _send_series_report(args, config, peer_config, summaries, out_dir) -> bool:
+    """Book section 9.3: at the end of a series the agent mails its own report,
+    with no human step. Returns False if a report was OWED and did not go out.
 
-    `--to` turns any series — counted or friendly — into a REHEARSAL of that
-    same path: same auto_send, same Gatekeeper, same interlock, delivered
-    elsewhere. Without it a friendly sends nothing to anyone.
+    Two modes and nothing else. A COUNTED series mails the lecturer. A friendly
+    mails `--to`, through the identical code, or sends nothing at all when
+    `--to` is absent - the ordinary warm-up case, and not a failure.
 
-    Deliberately not fatal. The games were played and their artifacts are on
-    disk; a failed send is recoverable with `report --counted`, whereas
-    crashing here would lose the printed summary of a series that really
-    happened.
+    A failed send is not fatal to the PROCESS: the games were played and their
+    artifacts are on disk, and crashing here would throw away the printed
+    summary of a series that really happened. It is fatal to the EXIT STATUS,
+    because a counted series that ends without a send is a lost game and must
+    never be mistaken for success.
     """
     counted = getattr(args, "counted", False)
     to = getattr(args, "to", None)
-    if not summaries or not (counted or to):
-        return
-    from .report import auto_send
+    if not counted and not to:
+        return True
 
     print()
-    if to:
-        _rehearsal_banner(counted, to)
-    else:
+    if not summaries:
+        # Reachable when a series ends without producing a sub-game but without
+        # raising either. There is nothing to build a report from, and for a
+        # counted series that is a lost game, not a quiet no-op.
+        _report_failure("the series produced no sub-games, so there is nothing to report", counted)
+        return not counted
+
+    from .report import auto_send
+
+    if counted:
         print("COUNTED series complete - sending the report automatically (book section 9.3)...")
+    else:
+        print(f"FRIENDLY series complete - sending the report automatically to {to}...")
+        print("  Nothing is submitted: a friendly owes no report to the lecturer.")
 
-    outcome = auto_send.send_counted_series(
-        Path(out_dir),
-        summaries[0]["game_id"],
-        config,
-        own_group_id=peer_config.group_id,
-        counted=counted,
-        to=to,
-    )
+    try:
+        outcome = auto_send.send_counted_series(
+            Path(out_dir),
+            summaries[0]["game_id"],
+            config,
+            own_group_id=peer_config.group_id,
+            counted=counted,
+            to=to,
+        )
+    except Exception as exc:  # noqa: BLE001 - must be loud, never a traceback that buries the series
+        _report_failure(f"the automatic send raised {type(exc).__name__}: {exc}", counted)
+        return not counted
+
     if outcome.sent:
-        where = outcome.recipient or "the lecturer"
-        print(f"  sent to {where} (gmail message id {outcome.message_id})")
-        if outcome.rehearsal:
-            print("  REHEARSAL ONLY - the lecturer received nothing and the league ledger is untouched.")
+        print(f"  sent to {outcome.recipient or 'the lecturer'} (gmail message id {outcome.message_id})")
+        return True
+
+    detail = "; ".join([outcome.reason or "no reason was recorded", *outcome.blockers])
+    _report_failure(detail, counted)
+    return not counted
+
+
+def _report_failure(detail: str, counted: bool) -> None:
+    """A counted series ending without either a send or a stated reason is the
+    one outcome that must never be quiet: the game is played, unrepeatable, and
+    worth nothing unreported."""
+    if not counted:
+        print(f"  NOT SENT: {detail}", file=sys.stderr)
         return
-    print(f"  NOT SENT: {outcome.reason}")
-    for blocker in outcome.blockers:
-        print(f"    - {blocker}")
-    print("  The artifacts are on disk. Fix the cause, then use the manual fallback:")
-    print(f"    uoh-mh01 report --game-id {summaries[0]['game_id']} --counted")
-
-
-def _rehearsal_banner(counted: bool, to: str) -> None:
-    kind = "COUNTED" if counted else "FRIENDLY"
-    print("*" * 72)
-    print(f"REHEARSAL - this is NOT a submission. {kind} series, --to {to}")
-    print("The full automatic path runs (auto_send, Gatekeeper, ledger interlock),")
-    print("but delivery goes to the address above and NOT to the lecturer, and the")
-    print("committed league ledger is not written. Nothing here counts for grading.")
-    print("*" * 72)
+    print("=" * 72, file=sys.stderr)
+    print("COUNTED SERIES WAS NOT REPORTED - it does not count until it is.", file=sys.stderr)
+    print(f"  {detail}", file=sys.stderr)
+    print("The artifacts are on disk. Fix the cause, then use the manual fallback:", file=sys.stderr)
+    print("  uoh-mh01 report --game-id <game_id> --counted", file=sys.stderr)
+    print("=" * 72, file=sys.stderr)

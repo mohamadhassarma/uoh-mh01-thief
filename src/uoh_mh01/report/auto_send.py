@@ -37,11 +37,6 @@ from .result_artifact import missing_mandatory_fields
 logger = logging.getLogger(__name__)
 
 
-# Where a REHEARSAL's interlock rows go. Deliberately not `league/` — the real
-# ledger is committed evidence of counted play, and a rehearsal must not leave
-# a row there that would later block a genuine send for the same series.
-REHEARSAL_LEDGER_NAME = "rehearsal_ledger.json"
-
 # Statuses that stop another attempt. `failed` is absent on purpose — see the
 # comment at the check itself.
 BLOCKING_STATUSES = frozenset({ledger.STATUS_SENT, ledger.STATUS_SENDING})
@@ -55,19 +50,23 @@ class AutoSendOutcome:
     result_path: Path | None = None
     message_id: str | None = None
     game_uid: str | None = None
-    rehearsal: bool = False
+    counted: bool = True
     recipient: str | None = None
 
 
-def blocking_reasons(result: dict[str, Any], *, ledger_path: Path) -> list[str]:
-    """Everything that must be true before a counted report may leave, in one
-    place so the automatic path and the manual fallback cannot drift."""
+def blocking_reasons(result: dict[str, Any], *, ledger_path: Path | None) -> list[str]:
+    """Everything that must be true before a report may leave, in one place so
+    the automatic path and the manual fallback cannot drift.
+
+    `ledger_path=None` for a friendly: the duplicate-send interlock is about
+    counted evidence, and a practice report may legitimately be sent twice.
+    """
     reasons = []
     if not result["mutual_agreement"]["confirmed"]:
         failed = [row["sub_game_number"] for row in result["sub_games"] if not row["audit"]["log_verified"]]
         reasons.append(f"the mutual audit did not confirm sub-game(s) {failed}")
     reasons.extend(missing_mandatory_fields(result))
-    if ledger.already_reported(result["game_uid"], path=ledger_path):
+    if ledger_path is not None and ledger.already_reported(result["game_uid"], path=ledger_path):
         reasons.append(f"a report for game_uid {result['game_uid']} was already sent (ledger)")
     return reasons
 
@@ -87,36 +86,39 @@ def send_counted_series(
     """Build, check, and mail this series' report. Called by the peer process
     itself at the end of a series — never by a human.
 
-    `to` makes this a REHEARSAL: identical code, identical Gatekeeper,
-    identical interlock, different recipient and a different file for the
-    interlock rows. The REPORT ITSELF is still built against the real ledger,
-    so `first_meeting_between_groups` and `games_played_including_this` come
-    out exactly as a genuine run would produce them — a rehearsal that
-    silently reported different numbers would not be a rehearsal of anything.
+    ONE path, two recipients. A counted series mails the lecturer; a friendly
+    mails `to`, or nothing at all if `to` is absent. Everything else — the
+    build, the refusal rules, the Gatekeeper — is the same code either way, so
+    a friendly send genuinely exercises the counted one.
+
+    The single asymmetry is the LEDGER, and it is forced: `league/` is
+    committed evidence of counted play, and a warm-up row there would make the
+    next real series against that opponent declare `first_meeting_between_
+    groups` wrongly — a rules-37/38 false declaration produced by accident,
+    which App. E rule 35 would charge to the innocent opponent too. So a
+    friendly writes no row and gets no duplicate-send interlock; its protection
+    against a runaway loop is the Gatekeeper, which it shares.
     """
-    rehearsal = to is not None
-    # Read the real ledger for report CONTENT; divert only the write side.
-    record_path = (logs_dir / REHEARSAL_LEDGER_NAME) if rehearsal else ledger_path
     result = pipeline.build(logs_dir, game_id, config, ledger_path=ledger_path)
     path = pipeline.write(result, logs_dir)
     game_uid = result["game_uid"]
 
-    existing = ledger.find(game_uid, path=record_path)
-    if existing is not None and existing.get("status") in BLOCKING_STATUSES:
-        # `sent` is obvious. `sending` covers a row stranded by a process killed
-        # mid-send: a missed send is recoverable by hand, a duplicate is not
-        # recallable, so an in-flight-looking row is the safe side of the trade.
-        #
-        # `failed` deliberately does NOT block. Nothing was delivered, and
-        # retrying is exactly what the manual fallback exists for — a failed row
-        # that blocked every retry would make that documented path impossible,
-        # which is how this was found: a rehearsal refused for a bad `--to`
-        # locked out the corrected one.
-        reason = f"the ledger already holds a {existing.get('status')!r} row for game_uid {game_uid}"
-        logger.warning("NOT auto-sending: %s", reason)
-        return AutoSendOutcome(sent=False, reason=reason, result_path=path, game_uid=game_uid, rehearsal=rehearsal)
+    if counted:
+        existing = ledger.find(game_uid, path=ledger_path)
+        if existing is not None and existing.get("status") in BLOCKING_STATUSES:
+            # `sent` is obvious. `sending` covers a row stranded by a process
+            # killed mid-send: a missed send is recoverable by hand, a duplicate
+            # is not recallable, so an in-flight-looking row is the safe side.
+            #
+            # `failed` deliberately does NOT block. Nothing was delivered, and
+            # retrying is exactly what the manual fallback exists for — a failed
+            # row that blocked every retry would make that documented path
+            # impossible.
+            reason = f"the ledger already holds a {existing.get('status')!r} row for game_uid {game_uid}"
+            logger.warning("NOT auto-sending: %s", reason)
+            return AutoSendOutcome(sent=False, reason=reason, result_path=path, game_uid=game_uid, counted=counted)
 
-    blockers = blocking_reasons(result, ledger_path=record_path)
+    blockers = blocking_reasons(result, ledger_path=ledger_path if counted else None)
     if blockers:
         logger.error("NOT auto-sending the report — %s blocker(s): %s", len(blockers), "; ".join(blockers))
         return AutoSendOutcome(
@@ -125,38 +127,38 @@ def send_counted_series(
             blockers=blockers,
             result_path=path,
             game_uid=game_uid,
-            rehearsal=rehearsal,
+            counted=counted,
         )
 
     opponent = next((g for g in result["groups"] if g != own_group_id), None)
-    _record(result, opponent, ledger.STATUS_SENDING, record_path, detail="rehearsal" if rehearsal else None)
+    if counted:
+        _record(result, opponent, ledger.STATUS_SENDING, ledger_path)
     try:
-        # `counted` is passed through UNCHANGED, not derived from `rehearsal`:
-        # a rehearsal of a counted run must take the counted branch everywhere
-        # it exists, so the only difference anywhere is the recipient.
-        sent = pipeline.send_report(
-            path, result, config, counted=counted, sender=sender, to=to, service=service
-        )
+        sent = pipeline.send_report(path, result, config, counted=counted, sender=sender, to=to, service=service)
     except Exception as exc:  # noqa: BLE001 - recorded, then surfaced to the operator
-        _record(result, opponent, ledger.STATUS_FAILED, record_path, detail=str(exc)[:300])
+        if counted:
+            _record(result, opponent, ledger.STATUS_FAILED, ledger_path, detail=str(exc)[:300])
         logger.error("automatic report send FAILED: %s", exc)
         return AutoSendOutcome(
-            sent=False, reason=f"send failed: {exc}", result_path=path, game_uid=game_uid, rehearsal=rehearsal
+            sent=False, reason=f"send failed: {exc}", result_path=path, game_uid=game_uid, counted=counted
         )
 
-    _record(result, opponent, ledger.STATUS_SENT, record_path, detail="rehearsal" if rehearsal else None)
-    logger.info("%s report sent for %s (message id %s)", "REHEARSAL" if rehearsal else "automatic", game_id, sent.get("id"))
+    if counted:
+        _record(result, opponent, ledger.STATUS_SENT, ledger_path)
+    logger.info("report sent for %s (message id %s)", game_id, sent.get("id"))
     return AutoSendOutcome(
         sent=True,
         result_path=path,
         message_id=sent.get("id"),
         game_uid=game_uid,
-        rehearsal=rehearsal,
+        counted=counted,
         recipient=to,
     )
 
 
-def _record(result: dict[str, Any], opponent: str | None, status: str, path: Path, *, detail: str | None) -> None:
+def _record(
+    result: dict[str, Any], opponent: str | None, status: str, path: Path, *, detail: str | None = None
+) -> None:
     ledger.record_counted_series(
         opponent_group_id=opponent or "unknown",
         game_id=result["game_id"],

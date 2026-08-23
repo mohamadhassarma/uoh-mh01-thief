@@ -48,17 +48,15 @@ def cmd_report(args) -> int:
 
 
 def _send(path: Path, result: dict, config, args) -> int:
-    """Every send from here goes through `auto_send.send_counted_series` — the
+    """Every send from here goes through `auto_send.send_counted_series` - the
     same entry point the peer process uses at the end of a series.
 
     There is deliberately no second implementation. An earlier version had one,
     and it wrote its own ledger row without the status the duplicate-send check
     reads, so a repeat manual send would not have been blocked at all.
     """
-    if args.counted and not args.to:
+    if args.counted:
         _fallback_banner()
-    elif args.to:
-        _rehearsal_banner(args.counted, args.to)
 
     outcome = auto_send.send_counted_series(
         Path(args.log_dir or "logs"),
@@ -71,8 +69,8 @@ def _send(path: Path, result: dict, config, args) -> int:
     )
     if outcome.sent:
         print(f"sent to {outcome.recipient or LECTURER_REPORT_ADDRESS} (gmail message id {outcome.message_id})")
-        if outcome.rehearsal:
-            print("REHEARSAL ONLY - the lecturer received nothing and the league ledger is untouched.")
+        if not outcome.counted:
+            print("FRIENDLY: nothing was submitted and the league ledger is untouched.")
         return 0
     print(f"\nNOT SENT: {outcome.reason}", file=sys.stderr)
     for blocker in outcome.blockers:
@@ -81,25 +79,15 @@ def _send(path: Path, result: dict, config, args) -> int:
 
 
 def _fallback_banner() -> None:
-    """Book §9.3 requires the peer process to send its own report with no human
-    step, so reaching a real submission by hand means the automatic send did
-    not happen — say so loudly rather than letting it look like the normal
+    """Book section 9.3 requires the peer process to send its own report with no
+    human step, so reaching a real submission by hand means the automatic send
+    did not happen - say so loudly rather than letting it look like the normal
     route."""
     print("\n" + "=" * 72, file=sys.stderr)
     print("MANUAL FALLBACK: book section 9.3 requires the peer process to send this", file=sys.stderr)
     print("report automatically at the end of a counted series. You are sending it by", file=sys.stderr)
     print("hand, which means the automatic send did not happen. Worth finding out why.", file=sys.stderr)
     print("=" * 72, file=sys.stderr)
-
-
-def _rehearsal_banner(counted: bool, to: str) -> None:
-    kind = "COUNTED" if counted else "FRIENDLY"
-    print("\n" + "*" * 72)
-    print(f"REHEARSAL - this is NOT a submission. {kind} report, --to {to}")
-    print("The full automatic path runs (auto_send, Gatekeeper, ledger interlock),")
-    print("but delivery goes to the address above and NOT to the lecturer, and the")
-    print("committed league ledger is not written. Nothing here counts for grading.")
-    print("*" * 72)
 
 
 def _warn_on_missing_mandatory_fields(result: dict) -> None:

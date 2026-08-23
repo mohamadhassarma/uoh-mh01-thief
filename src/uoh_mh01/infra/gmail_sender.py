@@ -83,31 +83,41 @@ def is_lecturer(address: str) -> bool:
 
 
 def resolve_recipient(*, counted: bool, override: str | None = None) -> str:
-    """`override` (`--to`) makes ANY run a REHEARSAL, counted or not.
+    """Two modes, and the mode alone decides the mailbox.
 
-    The lecturer's address is produced by exactly one branch: a counted run
-    with NO override. That is what a real submission is, and it stays the
-    default — omitting `--to` is what you do by accident, not what you type.
+    A COUNTED series goes to the lecturer. Always, with no override: that is
+    what counted means, and book §9.3 calls the reporting address "הכתובת
+    היחידה והמחייבת" — the single mandatory address. An earlier version let
+    `--to` divert a counted run so the automatic path could be exercised
+    safely; the flexibility bought nothing that a friendly does not already
+    buy, and it put a code path in the codebase whose whole purpose was to
+    make a counted report land somewhere other than where a counted report
+    must land. `--to` alongside `--counted` is now refused outright.
 
-    A rehearsal exists because the automatic §9.3 send is otherwise
-    untestable: the only trigger is a counted run, and a counted run mails the
-    lecturer. `--counted --to X` therefore runs the FULL automatic path —
-    same `auto_send`, same Gatekeeper, same ledger interlock — and only
-    changes where the mail lands. A separate "test mode" that skipped any of
-    that would prove nothing about the path that matters.
+    A FRIENDLY goes wherever `--to` says, or nowhere at all. Nowhere is the
+    default and it is structural, not a boolean: with no `--to` the address
+    resolves to something undeliverable, so a warm-up has nothing to send to
+    even if every other check were bypassed (PRD-07, App. E rule 52).
 
-    The one absolute rule left: an override may never resolve to the
-    lecturer's mailbox, in either mode. A rehearsal arriving at the reporting
-    address is a false submission, and it is silent at the moment it happens
-    and visible only at grading.
+    The one rule that survives from both: a friendly may never resolve to the
+    lecturer's mailbox. That would be a false submission, silent when it
+    happens and visible only at grading.
     """
+    if counted:
+        if override is not None:
+            raise MisdirectedReportError(
+                f"refusing --to {override!r} on a COUNTED series: a counted report goes to the lecturer "
+                f"({LECTURER_REPORT_ADDRESS}) and nowhere else. Drop --counted to send a friendly "
+                "report to that address instead — it runs the identical automatic path."
+            )
+        return LECTURER_REPORT_ADDRESS
     if override is None:
-        return LECTURER_REPORT_ADDRESS if counted else UNREACHABLE_ADDRESS
+        return UNREACHABLE_ADDRESS
     if is_lecturer(override):
         raise MisdirectedReportError(
-            f"refusing --to {override!r}: that is the lecturer's mailbox, and --to always means a "
-            "REHEARSAL. A rehearsal arriving at the reporting address is a false submission. "
-            "Use --counted with NO --to when you genuinely mean to submit."
+            f"refusing --to {override!r}: that is the lecturer's mailbox, and this series is not counted. "
+            "A friendly arriving at the reporting address is a false submission. "
+            "Use --counted with no --to when you genuinely mean to submit."
         )
     return override
 
