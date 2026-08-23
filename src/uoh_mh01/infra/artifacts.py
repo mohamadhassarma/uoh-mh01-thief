@@ -85,6 +85,7 @@ class LogArtifactBuilder:
         audit_of_opponent_passed: bool | None,
         audit_verified_steps: int,
         audit_failed_steps: list[int],
+        audit_reason: str | None = None,
     ) -> dict[str, Any]:
         ended_at = _now_iso()
         return {
@@ -110,6 +111,10 @@ class LogArtifactBuilder:
                     "passed": audit_of_opponent_passed,
                     "verified_steps": audit_verified_steps,
                     "failed_steps": audit_failed_steps,
+                    # Only set on a failure — including the verdict-floor
+                    # failures (nothing verified / not every step
+                    # explained), which would otherwise be invisible.
+                    "reason": audit_reason,
                 },
             },
             "records": self.records,

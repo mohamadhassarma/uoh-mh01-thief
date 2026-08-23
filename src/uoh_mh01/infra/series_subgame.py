@@ -11,11 +11,12 @@ from typing import Any
 
 from ..domain.brain_base import resolve_strategy
 from ..domain.match import UndefinedOutcomeError
-from ..domain.state import Side, other_side
+from ..domain.sealed_payload import build_audit_payload
+from ..domain.state import Side
 from .artifacts import LogArtifactBuilder, build_config_artifact, write_json
+from .audit import verify_revealed
 from .mcp_client import send_audit_reveal
 from .outcomes import DisputedOutcomeError
-from .watchdog import OpponentUnresponsiveError
 
 logger = logging.getLogger(__name__)
 
@@ -23,23 +24,30 @@ logger = logging.getLogger(__name__)
 async def play_one_sub_game(
     series_runtime,
     sub_game_number,
-    natural_role,
+    role,
     config,
     peer_config,
     strategy,
     seed,
-    game_id,
-    game_uid,
+    series,
     my_msg,
     theirs,
     out_dir,
 ) -> dict[str, Any]:
+    """`role` and the per-sub-game greetings `my_msg`/`theirs` are decided by
+    the caller, because the handshake now runs per sub-game and has to know the
+    role BEFORE this is called (infra/series_handshake.py). `series` carries
+    the pinned series identity — game_id/game_uid/terms — which never varies."""
     from ..orchestrator import PeerRuntime  # local import: avoid a cycle with orchestrator's own imports
 
-    role = natural_role if sub_game_number % 2 == 1 else other_side(natural_role)
+    game_id, game_uid = series.game_id, series.game_uid
     this_sub_game_strategy = strategy or _strategy_for_sub_game(peer_config, role, seed, sub_game_number)
     peer_runtime = PeerRuntime(role, config, peer_config, strategy=this_sub_game_strategy, sub_game_number=sub_game_number)
     series_runtime.start_sub_game(sub_game_number, peer_runtime)
+    # Rule #53: the host-spec declaration is sealed BEFORE the first move, so
+    # it is inside the chain the opponent audits rather than appended after the
+    # fact. Never sent as a turn — see _SealingMixin.seal_step_zero.
+    peer_runtime.seal_step_zero()
 
     summary: dict[str, Any] = {"sub_game_number": sub_game_number, "role": role.value}
     offending_side_str: str | None = None
@@ -60,29 +68,42 @@ async def play_one_sub_game(
         summary["disputed"] = {"mine": exc.mine, "theirs": exc.theirs}
         result_str, winner_role = "disputed", None
 
-    my_reveal = [{"step": r["step"], "nonce": r["nonce"]} for r in peer_runtime.own_sealed_records]
-    try:
-        audit_of_me = await send_audit_reveal(
-            peer_config.opponent_url,
-            my_reveal,
-            sub_game_number=sub_game_number,
-            response_timeout_sec=config.network.response_timeout_sec,
-            watchdog_timeout_sec=config.network.watchdog_timeout_sec,
-        )
-    except OpponentUnresponsiveError:
-        # The match outcome is already legitimately decided by this point —
-        # an opponent who goes silent specifically during the audit
-        # exchange does not get to unwind an already-settled sub-game.
-        # Logged as a genuine gap in the audit trail, not silently ignored.
-        logger.warning("opponent unresponsive during submit_audit for sub-game %s", sub_game_number)
-        audit_of_me = None
-    audit_of_opponent = await series_runtime.wait_for_audit_of_opponent(
-        sub_game_number, timeout=config.network.watchdog_timeout_sec
+    # The FULL sealed chain, not just nonces: the opponent has no mirrored
+    # copy of my moves to re-hash against any more, so the payload must
+    # travel with the reveal (docs/WIRE.md §5).
+    my_reveal = build_audit_payload(
+        sender=role.value,
+        records=[
+            {"payload": r["payload"], "nonce": r["nonce"], "commit": r["commit"]}
+            for r in peer_runtime.own_sealed_records
+        ],
+        result_claim=result_str,
     )
-    summary["audit_of_me_by_opponent"] = audit_of_me.passed if audit_of_me else None
+    # Push mine (best-effort — the opponent may already be exiting), then poll
+    # my own inbox for theirs and verify it MYSELF. `submit_audit` acks like
+    # every other tool, so there is no verdict to receive: each side computes
+    # its own verdict on the other's chain (docs/WIRE.md §5).
+    await send_audit_reveal(
+        peer_config.opponent_url,
+        my_reveal,
+        sub_game_number=sub_game_number,
+        response_timeout_sec=config.network.response_timeout_sec,
+        watchdog_timeout_sec=config.network.watchdog_timeout_sec,
+    )
+    their_payload = await series_runtime.wait_for_audit_reveal(
+        sub_game_number=sub_game_number, timeout=config.network.watchdog_timeout_sec
+    )
+    audit_of_opponent = None
+    if their_payload is None:
+        logger.warning("opponent never revealed its chain for sub-game %s", sub_game_number)
+    else:
+        audit_of_opponent = verify_revealed(their_payload.get("records", []), peer_runtime.received_commits)
+    # `audit_of_me_by_opponent` is deliberately absent: under an ack-only wire
+    # the opponent's verdict on ME never crosses back, and inventing a value
+    # for it would be a guess recorded as evidence.
     summary["audit_of_opponent_by_me"] = audit_of_opponent.passed if audit_of_opponent else None
 
-    terms = my_msg.terms
+    terms = series.terms
     write_json(
         out_dir / f"config_{game_id}_g{sub_game_number:02d}.json",
         build_config_artifact(game_id=game_id, game_uid=game_uid, sub_game_number=sub_game_number, terms=terms),
@@ -103,10 +124,15 @@ async def play_one_sub_game(
             result=result_str,
             winner_role=winner_role,
             offending_side=offending_side_str,
-            steps=len(peer_runtime.state.move_log),
+            steps=peer_runtime.state.step_number,
             audit_of_opponent_passed=audit_of_opponent.passed if audit_of_opponent else None,
             audit_verified_steps=audit_of_opponent.verified_steps if audit_of_opponent else 0,
             audit_failed_steps=list(audit_of_opponent.failed_steps) if audit_of_opponent else [],
+            audit_reason=(
+                audit_of_opponent.reason
+                if audit_of_opponent
+                else 'the opponent never revealed its chain'
+            ),
         ),
     )
     return summary

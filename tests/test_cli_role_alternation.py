@@ -71,7 +71,9 @@ def _peer_command(role: str, config_json: Path, peer_toml: Path, log_dir: Path, 
 def _own_move_letters(log: dict) -> list[str]:
     """The directions THIS side's own sealed records actually claim to have
     moved — `payload.detail` for every `action_type == "move"` record."""
-    return [r["payload"]["detail"] for r in log["records"] if r["payload"]["action_type"] == "move"]
+    # `.get` not `[]`: the chain now opens with the step-0 host-spec
+    # declaration (rule #53), which has a `type` and no `action_type`.
+    return [r["payload"]["detail"] for r in log["records"] if r["payload"].get("action_type") == "move"]
 
 
 def test_real_cli_series_runs_the_role_correct_brain_every_sub_game(tmp_path):

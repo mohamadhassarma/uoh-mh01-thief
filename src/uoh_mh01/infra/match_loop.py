@@ -10,37 +10,47 @@ bodies lives here.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 
-from ..domain.match import FIRST_MOVER, UndefinedOutcomeError
+from ..domain.match import UndefinedOutcomeError
 from ..domain.scoring import TerminalCondition, score_for
-from ..domain.state import Side, next_turn, other_side
+from ..domain.state import Side, other_side
 from ..domain.terminal_detect import UNDEFINED_CEILING, DetectedTerminal
+from .control_link import PLAYING, WAITING
+from .inboxes import poll, poll_now
+from .mcp_client import send_control
 from .outcomes import DisputedOutcomeError, MatchOutcome
-from .protocol_response import TerminalInfo
 from .state_machine import Phase
 from .watchdog import FreezeDetected
 
 logger = logging.getLogger(__name__)
 
-# Grace period for an opponent message CURRENTLY in flight (self._in_flight
-# > 0) when my own passive-wait timeout fires (_wait_for_opponent) — covers
-# ordinary processing latency under load; never extends the wait when the
-# opponent sent nothing at all (_in_flight stays 0). An internal robustness
-# margin, not a signed contract value.
-_IN_FLIGHT_GRACE_SEC = 5.0
+# How often the poll loop checks its own turns inbox. The reference's own
+# `network.poll_interval_seconds` default (ref_impl runtime.py:103); an
+# internal cadence, not a signed contract value.
+_POLL_INTERVAL_SEC = 0.5
+
+# The advisory control channel's own budget. Was 2.0s, which was not headroom
+# but a guarantee of failure: a control round-trip over a public tunnel
+# measured 1.8-2.1s, so one side logged 16 control timeouts against 2
+# successes on a healthy link. Nothing was lost (the channel is unscored and
+# fire-and-forget) but the signal was, and a budget that always fails cannot
+# tell you anything. 10s is real headroom over the worst tunnel latency we
+# have measured; it stays fire-and-forget, so a departed opponent still costs
+# the game nothing.
+_CONTROL_TIMEOUT_SEC = 10.0
 
 
 class _MatchLoopMixin:
     async def run_match(self) -> MatchOutcome:
+        self._announce_control(PLAYING)
         try:
             while self.outcome is None:
                 self.watchdog.assert_alive()
                 if self._pending_error is not None:
                     raise self._pending_error
-                if self.state.whose_turn is self.role:
+                if self.whose_turn is self.role:
                     await self._run_my_turn_within_budget()
                 else:
                     await self._wait_for_opponent()
@@ -50,7 +60,7 @@ class _MatchLoopMixin:
             # protocol didn't resolve" case, so this must not propagate bare.
             # See PRD-02 "Stage 2 corrections" (round 2).
             logger.warning("watchdog fired with no narrower timeout catching it first: %s", exc)
-            self._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=self.state.whose_turn)
+            self._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=self.whose_turn)
         except UndefinedOutcomeError as exc:
             self.log.finalize(condition=None, police_score=None, thief_score=None, undefined_outcome=str(exc))
             raise
@@ -85,37 +95,76 @@ class _MatchLoopMixin:
             self._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=self.role)
 
     async def _wait_for_opponent(self) -> None:
-        self._opponent_moved.clear()
-        wait_budget = min(self.config.network.watchdog_timeout_sec, self.peer_config.turn_timeout_seconds)
-        # A plain timeout here is not itself a fault — it just means neither
-        # the opponent nor a turn_timeout_seconds breach has happened yet;
-        # the top-of-loop watchdog.assert_alive() is what reports a real
-        # freeze, precisely, one loop iteration later.
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._opponent_moved.wait(), timeout=wait_budget)
+        """POLL my own turns inbox (docs/WIRE.md §4). Replaces waiting on an
+        asyncio.Event that a tool handler set: the handler is ack-only now and
+        does no processing, so arrival and processing are separate concerns and
+        only the loop that owns the state ever touches it.
+
+        A plain empty poll is not a fault — it just means the opponent has not
+        moved YET. Silence only becomes a technical loss once my own private
+        turn_timeout_seconds budget has elapsed since the turn changed hands.
+        """
+        self._announce_control(WAITING)
+        self._drain_control_channel()
+        message = await poll(self.inboxes.turns, timeout=_POLL_INTERVAL_SEC, poll_interval=_POLL_INTERVAL_SEC)
+        if message is not None:
+            await self.receive_opponent_turn(message)
+            return
         if self.outcome is not None or self._pending_error is not None:
             return
-        if self._in_flight > 0:
-            # The opponent's message DID arrive before I gave up — slow
-            # under load, not silent. Grace period instead of unilaterally
-            # blaming a side that is not actually unresponsive. PRD-03
-            # "Symmetric timeout outcomes".
-            deadline = asyncio.get_event_loop().time() + _IN_FLIGHT_GRACE_SEC
-            while self._in_flight > 0 and asyncio.get_event_loop().time() < deadline:
-                await asyncio.sleep(0.05)
-            if self.outcome is not None or self._pending_error is not None:
-                return
         if time.monotonic() - self._turn_started_at > self.peer_config.turn_timeout_seconds:
             logger.warning("opponent exceeded my private turn_timeout_seconds budget")
             self._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=other_side(self.role))
+
+    def _drain_control_channel(self) -> None:
+        """Process every pending control message. Non-blocking and advisory:
+        nothing here can change a game outcome (docs/WIRE.md §6)."""
+        while (raw := poll_now(self.inboxes.controls)) is not None:
+            self.control.handle(raw)
+
+    def _announce_control(self, status: str) -> None:
+        """Opt in on first use, then broadcast my status on change only.
+
+        FIRE-AND-FORGET, deliberately. Awaiting these put advisory traffic on
+        the critical path: two best-effort 2s sends against an unreachable
+        opponent burned 4s before the first turn was even attempted, and the
+        watchdog — which measures GAME progress — fired on that stall and
+        blamed the wrong side. The channel is optional and unscored, so it must
+        never be able to cost a game.
+        """
+        if not self.control.i_enabled:
+            self._fire_control(self.control.enable())
+        message = self.control.status_update(status, sub_game_number=self.sub_game_number)
+        if message is not None:
+            self._fire_control(message)
+
+    def _fire_control(self, message: dict) -> None:
+        task = asyncio.create_task(
+            send_control(
+                self.peer_config.opponent_url,
+                message,
+                response_timeout_sec=min(_CONTROL_TIMEOUT_SEC, self.config.network.response_timeout_sec),
+            )
+        )
+        # Hold a reference until it finishes: a bare create_task can be
+        # garbage-collected mid-flight.
+        self._control_tasks.add(task)
+        task.add_done_callback(self._control_tasks.discard)
 
     def _transition(self, phase: Phase) -> None:
         self.state_machine.transition(phase)
         self.log.record_phase(phase)
         self.watchdog.heartbeat()
 
-    def _advance_turn(self) -> None:
-        self.state = next_turn(self.state, FIRST_MOVER)
+    def _hand_turn_over(self) -> None:
+        """The turn token travels WITH the message I am about to send —
+        receiving one is what makes the other side green (docs/WIRE.md §4)."""
+        self.whose_turn = other_side(self.role)
+        self._turn_started_at = time.monotonic()
+
+    def _take_turn_back(self) -> None:
+        """Their message arrived, so the token is mine again."""
+        self.whose_turn = self.role
         self._turn_started_at = time.monotonic()
 
     def _finish(
@@ -125,7 +174,6 @@ class _MatchLoopMixin:
         self.outcome = MatchOutcome(condition, police_score, thief_score, offending_side=offending_side)
         if unconfirmed_claim is not None:
             self._unconfirmed_claim = unconfirmed_claim
-        self._opponent_moved.set()
 
     def _finish_claim(self, claim: DetectedTerminal) -> None:
         """Turn a CONFIRMED claim (agreed by both sides) into this side's own
@@ -138,12 +186,3 @@ class _MatchLoopMixin:
             )
         self._finish(TerminalCondition(claim.condition), offending_side=claim.offending_side)
 
-    def _current_terminal_info(self) -> TerminalInfo | None:
-        if self.outcome is None:
-            return None
-        return TerminalInfo(
-            self.outcome.terminal_condition.value,
-            self.outcome.police_score,
-            self.outcome.thief_score,
-            self.outcome.offending_side.value if self.outcome.offending_side else None,
-        )

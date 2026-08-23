@@ -83,3 +83,25 @@ def config_factory():
 @pytest.fixture
 def config() -> GameConfig:
     return make_config()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_the_connection_pool():
+    """Drop every pooled outbound connection between tests.
+
+    `infra/mcp_pool` is process-global on purpose: one process plays one
+    series against one opponent, and `run_series` closes the pool in its
+    `finally`. A test session breaks both halves of that assumption — many
+    "series" in one process, and successive tests binding NEW servers to the
+    SAME `127.0.0.1:8801` — so without this a later test inherits a live
+    connection to an earlier test's dead server. It self-heals (the failed
+    call retires the connection and the retry rebuilds it), but only after
+    paying the reconnect backoff, which is enough to blow a timing-sensitive
+    test's budget. Isolating here keeps the production lifetime rule intact
+    instead of weakening it to suit the suite.
+    """
+    from uoh_mh01.infra import mcp_pool
+
+    mcp_pool._POOL.clear()
+    yield
+    mcp_pool._POOL.clear()

@@ -93,6 +93,33 @@ There is also a seventh, *unscoreable* outcome: if the match-length ceiling
 raises `UndefinedOutcomeError` instead of guessing a score. See "Open
 questions" below.
 
+### Where each condition is ACTIVE (PRD-06, state model)
+
+Conditions 2 and 3 — **capture by barrier** and **capture by entrapment** —
+are **retained** (book §3.4 confirms both) but are **active only in the
+single-process simulator** (`domain/match.py`, `domain/eval_match.py`,
+`selftest`, the evaluation harness). They are **gated OFF on the peer
+runtime**, which resolves captures through the claim protocol instead
+(`capture_claim` → `claim_response`; see `docs/WIRE.md` §5 and
+`domain/terminal_detect.py`'s peer-path banner).
+
+The reason is not that the book drops them — it does not. It is that on the
+peer path **only one side can detect either condition**: only the thief can
+see that all four of its orthogonal neighbours are blocked, and only the thief
+knows a barrier landed on its own cell. The police holds no copy of the
+thief's position to derive the same fact from. A terminal condition that one
+side can declare and the other cannot independently derive is an *asymmetric*
+terminal — precisely the desync that App. E rule 35 voids for **both** teams.
+So the peer path never emits either unilaterally; an entrapped or
+barrier-caught thief is resolved by the police's ordinary capture claim on a
+later turn, or by the ceiling.
+
+**No new scoring rows.** Book §3.5 defines only three outcome events, so
+`domain/scoring.py` maps all three capture variants onto the single CAPTURE
+row (`_CAPTURE_CONDITIONS` → `capture_cop`/`capture_thief`). The distinction
+between them is descriptive — it lives in the terminal-condition name recorded
+in the log and result artifacts — never in the score.
+
 ## Acceptance criteria
 
 - [x] A full match runs to a terminal state without crashing (`pytest`, and

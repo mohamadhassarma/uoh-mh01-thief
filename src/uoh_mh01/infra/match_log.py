@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..domain.state import LogEntry
+from ..domain.own_state import OwnStepEntry  # noqa: F401  (documents the entry shape record_action expects)
 from .state_machine import Phase
 
 
@@ -39,18 +39,21 @@ class MatchLogRecorder:
     disputed: dict[str, Any] | None = None
     unconfirmed_claim: str | None = None
 
-    def record_action(self, entry: LogEntry) -> None:
+    def record_action(self, entry, actor) -> None:
+        """Records one of MY OWN steps. `own_pos` only: this peer never holds
+        the opponent's position, so there is nothing else it could honestly
+        write here (docs/WIRE.md §2.1)."""
         self.moves.append(
             {
                 "timestamp": _now_iso(),
-                "turn_number": entry.turn_number,
-                "actor": entry.actor.value,
+                "step": entry.step,
+                "actor": actor.value,
                 "action_type": entry.action_type.value,
                 "detail": entry.detail,
-                "cop_pos": [entry.resulting_cop_pos.row, entry.resulting_cop_pos.col],
-                "thief_pos": [entry.resulting_thief_pos.row, entry.resulting_thief_pos.col],
-                "capture_triggered": entry.capture_triggered,
-                "capture_claimed_by_police": entry.capture_claimed_by_police,
+                "own_pos": [entry.resulting_own_pos.row, entry.resulting_own_pos.col],
+                "barrier_placed": (
+                    [entry.barrier_placed.row, entry.barrier_placed.col] if entry.barrier_placed else None
+                ),
             }
         )
 

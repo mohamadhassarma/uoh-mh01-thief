@@ -16,24 +16,32 @@ from .rules import is_barrier_placement_legal, legal_moves
 from .state import MatchState, Side
 
 
-def legal_actions(state: MatchState, side: Side) -> tuple[Action, ...]:
-    """Every legal action available to `side` in `state`.
+def legal_actions(state, side: Side) -> tuple[Action, ...]:
+    """Every legal action available to `side`.
 
     For the thief this is just its legal moves. For the police it is legal
     moves PLUS legal barrier placements — move-or-barrier is a single choice
     among peers, not two separate decisions (rule: "MOVES, or forgoes
     movement to PLACE A BARRIER. Not both in the same turn").
+
+    Accepts either an `OwnGameState` (the live peer runtime) or the
+    simulator's omniscient `MatchState`, which is projected down to one side's
+    own view first. Only the acting side's OWN position was ever needed here —
+    the previous `state.cop_pos if ... else state.thief_pos` read the opponent
+    field on the peer path purely as an accident of the shared type.
     """
-    movement = state.config.movement
-    pos = state.cop_pos if side is Side.POLICE else state.thief_pos
-    actions: list[Action] = [MoveAction(d) for d in legal_moves(state.board, pos, movement)]
+    from .own_state import own_view
+
+    own = own_view(state, side) if isinstance(state, MatchState) else state
+    movement = own.config.movement
+    actions: list[Action] = [MoveAction(d) for d in legal_moves(own.board, own.own_pos, movement)]
 
     if side is Side.POLICE:
-        candidates = (state.cop_pos, *state.board.orthogonal_neighbors(state.cop_pos))
+        candidates = (own.own_pos, *own.board.orthogonal_neighbors(own.own_pos))
         actions += [
             BarrierAction(target)
             for target in candidates
-            if is_barrier_placement_legal(state.board, state.cop_pos, target, state.barriers_placed, movement)
+            if is_barrier_placement_legal(own.board, own.own_pos, target, own.barriers_placed, movement)
         ]
 
     return tuple(actions)

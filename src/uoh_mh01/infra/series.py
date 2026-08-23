@@ -1,7 +1,8 @@
 """`run_series`: the real stage-3 entry point. Plays a full `num_games`-
-sub-game series against one opponent — handshake once, then each sub-game
-with role alternation, real commit-reveal, a mutual audit, and the three
-per-series/per-sub-game JSON artifacts (PRD-03).
+sub-game series against one opponent — a handshake PER SUB-GAME (see
+infra/series_handshake.py for why that moved), role alternation, real
+commit-reveal, a mutual audit, and the three per-series/per-sub-game JSON
+artifacts (PRD-03).
 """
 
 from __future__ import annotations
@@ -11,12 +12,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from ..domain.state import Side
+from ..domain.state import Side, other_side
 from ..shared.peer_config import PeerConfig
 from .artifacts import build_declaration, write_json
-from .mcp_client import send_negotiate
+from .mcp_pool import close_all
 from .mcp_server import build_server
-from .negotiation import build_negotiate_message, game_ids, verify_peer_message
+from .series_handshake import SeriesIdentity, negotiate_sub_game
 from .series_runtime import SeriesRuntime
 from .series_subgame import play_one_sub_game
 
@@ -35,8 +36,9 @@ async def run_series(
     """Returns one summary dict per sub-game played:
     `{"sub_game_number", "role", "terminal_condition", "police_score",
     "thief_score", "offending_side", "undefined_outcome", "disputed"}`.
-    Raises `infra.negotiation.NegotiationRefusedError` if the handshake itself
-    fails — the series never starts playing on a terms mismatch.
+    Raises `infra.negotiation.NegotiationRefusedError` if the FIRST handshake
+    fails — the series never starts playing on a terms mismatch — or if a
+    later re-negotiation contradicts the series it is re-affirming.
 
     `strategy`, if given, is used AS-IS for every sub-game regardless of role
     alternation (only test callers that need one fixed, role-agnostic
@@ -50,57 +52,56 @@ async def run_series(
     out_dir = Path(out_dir or "logs")
     natural_role = role
     series_runtime = SeriesRuntime()
-    server = build_server(series_runtime, name=f"uoh-mh01-{role.value}")
+    server = build_server(series_runtime.inboxes, name=f"uoh-mh01-{role.value}")
     server_task = asyncio.create_task(
-        server.run_http_async(transport="http", host="127.0.0.1", port=peer_config.my_port, show_banner=False, log_level="warning")
+        server.run_http_async(
+            transport="http", host="127.0.0.1", port=peer_config.my_port, show_banner=False, log_level="warning"
+        )
     )
 
     started_at = _now_iso()
+    series: SeriesIdentity | None = None
     try:
-        my_msg = build_negotiate_message(natural_role, config, peer_config, sub_game_number=1)
-        series_runtime.set_negotiate_message(my_msg)
-        theirs = await send_negotiate(
-            peer_config.opponent_url,
-            my_msg,
-            response_timeout_sec=config.network.response_timeout_sec,
-            watchdog_timeout_sec=config.network.watchdog_timeout_sec,
-        )
-        verify_peer_message(my_msg, theirs)
-        game_id, game_uid = game_ids(my_msg, theirs)
-        logger.info("handshake agreed: game_id=%s game_uid=%s", game_id, game_uid)
-
         summaries = []
         for sub_game_number in range(1, config.network.num_games + 1):
+            sub_game_role = natural_role if sub_game_number % 2 == 1 else other_side(natural_role)
+            # Greet for THIS sub-game, declaring the pinned uid from sub-game 2
+            # onward. Series identity is fixed by the first agreement and is
+            # only ever re-affirmed here, never re-derived.
+            series, my_msg, theirs = await negotiate_sub_game(
+                series_runtime, sub_game_number, sub_game_role, config, peer_config, series=series
+            )
+            if sub_game_number == 1:
+                # ONCE, PRE-SERIES, from the first negotiation. Written before
+                # a single move is played so that a series which breaks at
+                # sub-game 2 still leaves a declaration behind — which is
+                # exactly what did NOT happen when the handshake lived outside
+                # the loop and this write lived after it.
+                _write_declaration(out_dir, series, config, started_at, ended_at="")
             summaries.append(
                 await play_one_sub_game(
                     series_runtime,
                     sub_game_number,
-                    natural_role,
+                    sub_game_role,
                     config,
                     peer_config,
                     strategy,
                     seed,
-                    game_id,
-                    game_uid,
+                    series,
                     my_msg,
                     theirs,
                     out_dir,
                 )
             )
 
-        write_json(
-            out_dir / f"declaration_{game_id}.json",
-            build_declaration(
-                game_id=game_id,
-                game_uid=game_uid,
-                num_sub_games=config.network.num_games,
-                groups={"mine": my_msg.identity, "opponent": theirs.identity},
-                started_at=started_at,
-                ended_at=_now_iso(),
-            ),
-        )
+        # Not a second declaration: the same file, re-stamped with the end time
+        # now that one is known. Every other field is byte-identical.
+        _write_declaration(out_dir, series, config, started_at, ended_at=_now_iso())
         return summaries
     finally:
+        # The pooled outbound connections are held for the whole series
+        # (infra/mcp_pool.py); this is the one place that closes them.
+        await close_all()
         deadline = asyncio.get_event_loop().time() + 2.0
         while server_task and not server_task.done() and asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(0.02)
@@ -109,6 +110,24 @@ async def run_series(
             await server_task
         except (asyncio.CancelledError, Exception):
             logger.debug("server task raised during shutdown", exc_info=True)
+
+
+def _write_declaration(out_dir: Path, series: SeriesIdentity, config, started_at: str, *, ended_at: str) -> None:
+    """Always from `series.my_first_msg`/`their_first_msg` — the FIRST
+    agreement — never from whichever sub-game happens to be current. The
+    per-sub-game greetings differ in `role`, `nonce` and `sub_game_number`,
+    none of which belongs in a series-level declaration."""
+    write_json(
+        out_dir / f"declaration_{series.game_id}.json",
+        build_declaration(
+            game_id=series.game_id,
+            game_uid=series.game_uid,
+            num_sub_games=config.network.num_games,
+            groups={"mine": series.my_first_msg.identity, "opponent": series.their_first_msg.identity},
+            started_at=started_at,
+            ended_at=ended_at,
+        ),
+    )
 
 
 def _now_iso() -> str:

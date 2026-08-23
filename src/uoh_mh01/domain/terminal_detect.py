@@ -55,6 +55,60 @@ def detect_from_last_action(state: MatchState) -> DetectedTerminal | None:
     return None
 
 
+# ----------------------------------------------------------------------------
+# PEER PATH — the claim protocol. No shared board exists here, so nothing below
+# ever inspects an opponent position; a terminal condition is either CLAIMED
+# from my own state or CONFIRMED by the opponent's honest answer.
+#
+# GATED OFF on this path, deliberately: capture-by-entrapment and
+# capture-by-barrier. Both are real book rules (§3.4) and both stay ACTIVE in
+# the simulator above, but neither can be detected by the side it would
+# benefit — only the thief can see that it is surrounded, and only the thief
+# knows a barrier landed on its own cell. Emitting either unilaterally would
+# be an asymmetric terminal the opponent cannot independently derive, which is
+# exactly the desync App. E rule 35 zeroes both teams for. They resolve here
+# through the ordinary capture claim instead. See PRD-01 "Open questions".
+# ----------------------------------------------------------------------------
+
+
+def peer_capture_claim(own, action) -> list[int] | None:
+    """The police's "I claim you are at [r,c]" — its OWN cell after a move.
+
+    Police-only and MOVE-only, matching the reference
+    (`ref_impl/src/police_thief/peer/turn_sender.py:46-49`): a barrier
+    placement never carries a capture claim.
+    """
+    from .match import MoveAction
+
+    if own.role is not Side.POLICE or not isinstance(action, MoveAction):
+        return None
+    return [own.own_pos.row, own.own_pos.col]
+
+
+def peer_win_claim(own) -> dict | None:
+    """The thief's `{"type": "survival"}` once it has taken enough of its OWN
+    steps — self-evident from its own state, and provable at audit."""
+    if own.role is not Side.THIEF:
+        return None
+    if own.survived_steps >= own.config.movement.survival_threshold:
+        return {"type": "survival"}
+    return None
+
+
+def answer_capture_claim(own, claim: list[int]) -> dict:
+    """The honest answer to a capture claim. Lying is pointless: the audit
+    reveals the sealed true position and a false answer forfeits the game
+    (`ref_impl/src/police_thief/domain/rules.py:26-32`)."""
+    caught = [own.own_pos.row, own.own_pos.col] == list(claim)
+    return {"claim": list(claim), "caught": caught}
+
+
+def peer_ceiling_reached(own) -> bool:
+    """My own max_moves ceiling — the one pre-turn self-check that survives on
+    the peer path, since it reads nothing but my own action count."""
+    return own.step_number >= own.config.movement.max_moves
+
+
 def detect_pre_turn(state: MatchState, role: Side) -> DetectedTerminal | None:
     """Checked before `role` acts: entrapment (thief only) and the max_moves
     ceiling. Both are self-detected with NO accompanying move — there is

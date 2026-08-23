@@ -40,9 +40,14 @@ class NegotiateMessage:
     scent_model_sha256: str
     sub_game_number: int
     role: str
+    # The derived series uid, declared from sub-game 2 onward (interop kit
+    # SPEC §7.3). It cannot be declared on first contact: the derivation needs
+    # the OPPONENT's group id, which first contact is what supplies. OMISSION
+    # NEVER REFUSES in either direction — see `verify_declared_uid`.
+    game_uid: str | None = None
 
     def to_kwargs(self) -> dict[str, Any]:
-        return {
+        kwargs = {
             "terms": self.terms,
             "nonce": self.nonce,
             "signature": self.signature,
@@ -50,7 +55,15 @@ class NegotiateMessage:
             "scent_model_sha256": self.scent_model_sha256,
             "sub_game_number": self.sub_game_number,
             "role": self.role,
+            # Top-level `group_id` as well as inside `identity`: the kit reads
+            # `raw["group_id"] or raw["identity"]["group_id"]` (negotiate.py
+            # SPAR-N08) and the reference reads the nested one. Sending both
+            # satisfies either reader.
+            "group_id": self.identity.get("group_id"),
         }
+        if self.game_uid is not None:
+            kwargs["game_uid"] = self.game_uid
+        return kwargs
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> NegotiateMessage:
@@ -58,15 +71,16 @@ class NegotiateMessage:
             terms=d["terms"],
             nonce=d["nonce"],
             signature=d["signature"],
-            identity=d["identity"],
+            identity=d.get("identity") or {"group_id": d.get("group_id")},
             scent_model_sha256=d["scent_model_sha256"],
             sub_game_number=d["sub_game_number"],
             role=d["role"],
+            game_uid=d.get("game_uid"),
         )
 
 
 def build_negotiate_message(
-    role: Side, config, peer_config: PeerConfig, *, sub_game_number: int
+    role: Side, config, peer_config: PeerConfig, *, sub_game_number: int, game_uid: str | None = None
 ) -> NegotiateMessage:
     terms = terms_from_config(config)
     nonce = secrets.token_hex(NONCE_BYTES)
@@ -85,7 +99,28 @@ def build_negotiate_message(
         scent_model_sha256=scent_model_sha256(),
         sub_game_number=sub_game_number,
         role=role.value,
+        game_uid=game_uid,
     )
+
+
+def verify_declared_uid(derived: str, declared: str | None) -> None:
+    """SPEC §7.3. We always derive the uid ourselves; if the opponent ALSO
+    declared one, the two derivations must agree.
+
+    This is the only moment a wrong-input uid can surface. The uid never
+    crosses the wire during play, so a peer that derived it from a wider
+    object than the flat terms produces artifacts that are perfectly
+    self-consistent and wrong only when the two teams' reports are joined the
+    next morning (kit WARNINGS §2). Omission never refuses — the professor's
+    unmodified reference declares no uid at all, and a guard that fail-fasts
+    on silence forfeits that game to itself."""
+    if declared is not None and declared != derived:
+        raise NegotiationRefusedError(
+            f"game_uid mismatch: I derive {derived} from the flat negotiated terms and the sorted "
+            f"group ids; they declared {declared}. The terms already value-equal, so their uid "
+            "almost certainly came from a WIDER input than the extracted flat terms — check the "
+            "input to their derive step, not the derivation (interop kit SPAR-N10 / WARNINGS §2)"
+        )
 
 
 def verify_peer_message(mine: NegotiateMessage, theirs: NegotiateMessage) -> None:

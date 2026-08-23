@@ -120,7 +120,8 @@ def cmd_peer(args: argparse.Namespace) -> int:
         else:
             print(f"  Terminal condition: {summary['terminal_condition']}")
             print(f"  Score — police: {summary['police_score']}, thief: {summary['thief_score']}")
-        print(f"  Audit of me by opponent: {summary['audit_of_me_by_opponent']}")
+        # Only MY verdict on THEM exists: with an ack-only wire the opponent's
+        # verdict on me never crosses back (docs/WIRE.md §5).
         print(f"  Audit of opponent by me: {summary['audit_of_opponent_by_me']}")
     print(f"\nArtifacts written to: {out_dir}")
     return 0

@@ -3,26 +3,26 @@ SYMMETRIC result — both sides agreeing on the SAME terminal condition and
 the SAME offending party. Never one side reading survival while the other
 reads technical loss.
 
-Two fast, deterministic unit tests exercise the fix directly
-(`receive_opponent_move`'s idempotent replay and post-finish rejection).
-The third, slow test reproduces the original failure end to end, over two
-real subprocesses, at the REAL signed contract values (no shrunk
+One fast, deterministic unit test covers a late message arriving after this
+side already settled. The slow test reproduces the original failure end to end,
+over two real subprocesses, at the REAL signed contract values (no shrunk
 timeouts) — a genuinely stalled peer, not an artificially tight budget.
+
+The old duplicate-replay unit test moved to test_claim_protocol.py: with
+ack-only tools there is no response to replay, so a retried commit is now
+dropped at PROCESSING time instead.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import subprocess
 import sys
 from pathlib import Path
 
-from uoh_mh01.domain.board import Direction
-from uoh_mh01.domain.match import MoveAction
 from uoh_mh01.domain.scoring import TerminalCondition
 from uoh_mh01.domain.state import Side
-from uoh_mh01.infra.protocol_builders import action_to_request
+from uoh_mh01.infra.turn_message_builders import build_turn_message
 from uoh_mh01.orchestrator import PeerRuntime
 from uoh_mh01.shared.peer_config import PeerConfig
 
@@ -36,45 +36,23 @@ def _peer_config(role: str = "police") -> PeerConfig:
     )
 
 
-async def test_duplicate_commit_is_replayed_not_reapplied(config_factory):
+async def test_a_late_turn_after_i_already_settled_does_not_overwrite_my_outcome(config_factory):
+    """A message that arrives after this side has already declared a timeout
+    must not silently rewrite an outcome already returned to my own caller."""
     config = config_factory(grid_size=5, thief_start=(2, 2))
     runtime = PeerRuntime(Side.POLICE, config, _peer_config())
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.THIEF)
+    runtime.whose_turn = Side.THIEF
+    runtime._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=Side.THIEF)
+    original_state, original_outcome = runtime.state, runtime.outcome
 
-    request = action_to_request(
-        MoveAction(Direction.W), Side.THIEF, runtime.state.turn_number,
-        police_actions_taken=0, thief_actions_taken=1, commit="fixed-test-commit-abc",
-    )
-    first = await runtime.receive_opponent_move(request)
-    state_after_first = runtime.state
+    late = build_turn_message(
+        step=1, sender="thief", hint="too late", smell_grid={}, commit="c" * 64,
+        win_claim={"type": "survival"},
+    ).to_wire()
+    await runtime.receive_opponent_turn(late)
 
-    # A retry of the IDENTICAL commit (what send_with_retry does after a
-    # lost/delayed response) must get back the SAME answer, not be
-    # re-evaluated against the now-advanced state.
-    second = await runtime.receive_opponent_move(request)
-
-    assert second == first
-    assert runtime.state is state_after_first
-
-
-async def test_message_after_self_declared_finish_is_rejected_not_reapplied(config_factory):
-    config = config_factory(grid_size=5, thief_start=(2, 2))
-    runtime = PeerRuntime(Side.POLICE, config, _peer_config())
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.THIEF)
-    runtime._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=Side.THIEF)  # simulate a timeout self-declare
-    original_state = runtime.state
-    original_outcome = runtime.outcome
-
-    request = action_to_request(
-        MoveAction(Direction.W), Side.THIEF, runtime.state.turn_number,
-        police_actions_taken=0, thief_actions_taken=1, commit="late-arriving-commit",
-    )
-    response = await runtime.receive_opponent_move(request)
-
-    assert response.accepted is False
-    assert "already finished" in response.reason
-    assert runtime.state is original_state
     assert runtime.outcome is original_outcome
+    assert runtime.state is original_state
 
 
 def _write_config_json(path: Path) -> None:
@@ -95,7 +73,13 @@ group_id = "{group_id}"
 [network]
 my_port = {my_port}
 opponent_url = "http://127.0.0.1:{opponent_port}/mcp"
-turn_timeout_seconds = 180
+# PRIVATE per-peer budget, deliberately NOT a signed contract value (the signed
+# response_timeout_sec=30 / watchdog_timeout_sec=60 in game.json are untouched).
+# Shortened from 180 because ack-only tools changed the endgame: a peer can no
+# longer be TOLD by the transport that its opponent already settled — every
+# handler returns {{"ok": True}} regardless — so it must wait out this budget.
+# At 180 the stalled peer alone added 3 minutes to the run.
+turn_timeout_seconds = 30
 """,
         encoding="utf-8",
     )

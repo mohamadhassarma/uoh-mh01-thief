@@ -36,3 +36,4 @@ class MatchOutcome:
     police_score: int
     thief_score: int
     offending_side: Side | None = None
+

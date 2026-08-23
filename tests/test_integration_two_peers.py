@@ -148,6 +148,28 @@ def test_two_real_subprocesses_play_a_full_series_with_role_alternation_and_clea
         thief_config = json.loads((thief_dir / f"config_{suffix}").read_text(encoding="utf-8"))
         assert police_config["config_sha256"] == thief_config["config_sha256"]
 
+        # --- the CONTRACT's notion of a correct game (PRD-06) ----------------
+        # 1. Only the contract's own outcomes are reachable on the peer path.
+        #    Entrapment and capture-by-barrier are gated OFF here (they stay
+        #    active in the simulator) precisely because neither side can derive
+        #    them symmetrically — see domain/terminal_detect.py.
+        assert police_log["summary"]["result"] in ("capture_landing", "survival", "technical_loss")
+
+        # 2. NO SHARED BOARD. Every sealed record's `state` string carries the
+        #    sealing peer's OWN cell and nothing else. If either side were
+        #    still mirroring the opponent, a second position would appear here.
+        for log in (police_log, thief_log):
+            for record in log["records"]:
+                state = record["payload"].get("state", "")
+                if state:
+                    assert state.count("self=") == 1, state
+                    assert "cop_pos" not in state and "thief_pos" not in state, state
+
+        # 3. The audit verified the opponent's FULL revealed chain — payloads
+        #    and nonces both — rather than a locally reconstructed guess.
+        assert police_log["summary"]["audit"]["verified_steps"] > 0
+        assert thief_log["summary"]["audit"]["verified_steps"] > 0
+
     # Role alternation actually happened: police-repo process played police
     # on some sub-games and thief on others.
     assert True in seen_roles["police"] and False in seen_roles["police"]

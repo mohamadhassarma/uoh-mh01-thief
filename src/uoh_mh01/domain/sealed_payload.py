@@ -65,3 +65,14 @@ def build_step_zero_payload(*, spec: dict[str, Any], code_version: str, group_na
         "group_name": group_name,
         "sub_game_number": sub_game_number,
     }
+
+
+def build_audit_payload(*, sender: str, records: list[dict[str, Any]], result_claim: str) -> dict[str, Any]:
+    """The contract `AuditPayload` (docs/WIRE.md §5) — exactly three keys.
+
+    `records` is the FULL sealed chain, `[{payload, nonce, commit}]`, so the
+    opponent re-hashes every step with its own serializer. Routing metadata
+    (which sub-game this belongs to) rides OUTSIDE this object, as a tolerated
+    extra key on the envelope, so the contract shape stays exact.
+    """
+    return {"sender": sender, "records": records, "result_claim": result_claim}

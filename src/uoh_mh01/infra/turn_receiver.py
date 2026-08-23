@@ -1,145 +1,102 @@
-"""Handling an INCOMING opponent move or terminal-condition declaration.
+"""Handling an INCOMING opponent turn, popped from my own inbox by the poll
+loop (docs/WIRE.md §4) — never inside a tool handler.
 
-Split out of orchestrator.py to keep files under the project's ~150-line
-budget (mirroring the reference implementation's own peer/turn_handler.py
-split — see PRD-02 "Part A findings"). A mixin, not a standalone class, so
-PeerRuntime keeps a single ordinary method-call surface
-(`self.receive_opponent_move(...)`) even though the implementation lives
-here. Per PRD-02 "Architecture decisions" #2, this NEVER transitions this
-peer's own state machine — it only updates MatchState and, on a terminal
-condition, this peer's outcome.
+GUTTED, deliberately. There is no opponent move to apply: the contract does
+not put the mover's move on the wire (§2.1), so this side cannot — and must
+not — reconstruct the opponent's board. This handler does exactly four things:
+
+  1. records the opponent's commit for the post-sub-game audit,
+  2. notes any barrier they declared (public by rule, impassable for both),
+  3. folds hint + smell_grid into MY belief,
+  4. resolves the claim protocol (capture claim / claim response / win claim).
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from ..domain.match import UndefinedOutcomeError
-from ..domain.reducers import apply_barrier, apply_move
-from ..domain.scoring import TerminalCondition, score_for
-from ..domain.sealed_payload import build_move_payload, state_str
-from ..domain.state import IllegalActionError, Side, other_side
-from ..domain.terminal_detect import detect_from_last_action, detect_pre_turn
-from .outcomes import DisputedOutcomeError
-from .protocol import MoveRequest
-from .protocol_builders import request_to_action
-from .protocol_response import MoveResponse, TerminalInfo
-from .receiver_helpers import absorb_opponent_signals as _absorb_opponent_signals
-from .receiver_helpers import counter_mismatch as _counter_mismatch
-from .receiver_helpers import early_response as _early_response
-from .receiver_helpers import sender_position as _sender_position
+from ..domain.board import Position
+from ..domain.own_state import note_opponent_barrier
+from ..domain.scoring import TerminalCondition
+from ..domain.state import Side, other_side
+from ..domain.terminal_detect import answer_capture_claim
+from .receiver_helpers import absorb_opponent_signals
+from .turn_message import ProtocolError, TurnMessage
+from .turn_message_builders import parse_turn_message
 
 logger = logging.getLogger(__name__)
 
 
 class _TurnReceiverMixin:
-    async def receive_opponent_move(self, request: MoveRequest) -> MoveResponse:
-        self._in_flight += 1
-        try:
-            async with self._lock:
-                early = _early_response(self, request)
-                if early is not None:
-                    return early
-                sender = Side(request.role)
-                if sender is not other_side(self.role):
-                    return MoveResponse(accepted=False, reason=f"unexpected sender role {request.role!r}")
-                if request.action_type == "declare_terminal":
-                    response = self._handle_declare_terminal(sender, request)
-                else:
-                    response = self._handle_move_or_barrier(sender, request)
-                if request.commit:
-                    self._replayed_responses[request.commit] = response
-                return response
-        finally:
-            self._in_flight -= 1
-
-    def _handle_declare_terminal(self, sender: Side, request: MoveRequest) -> MoveResponse:
-        mismatch = _counter_mismatch(request, self.state)
-        if mismatch is not None:
-            return MoveResponse(accepted=False, divergence=mismatch)
-
-        self.received_commits.record(
-            request.turn_number,
-            build_move_payload(
-                step=request.turn_number,
-                role=sender.value,
-                action_type="declare_terminal",
-                detail=request.claimed_condition or "",
-                state=state_str(self.state.board.grid_size, _sender_position(self.state, sender), self.state.board.barriers),
-            ),
-            request.commit,
-        )
-
-        my_claim = detect_pre_turn(self.state, sender)
-        my_condition = my_claim.condition if my_claim else None
-        self._opponent_moved.set()
-
-        if my_condition != request.claimed_condition:
-            self._pending_error = DisputedOutcomeError(mine=my_condition, theirs=request.claimed_condition)
-            return MoveResponse(accepted=True, claim_agreement=False)
+    async def receive_opponent_turn(self, raw: dict[str, Any]) -> None:
+        """Process one inbound turn. Validation happens BEFORE any state
+        change: an inbound turn is adversarial input and a partially applied
+        bad turn cannot be rolled back (docs/WIRE.md §3)."""
+        if self.outcome is not None:
+            # A message that arrives after this side already settled must not
+            # silently rewrite an outcome already returned to my own caller
+            # (PRD-03 "Symmetric timeout outcomes"). With ack-only tools there
+            # is no rejection to send back — the sender learns it by timing out.
+            logger.debug("ignored a turn that arrived after this sub-game settled")
+            return
 
         try:
-            self._finish_claim(my_claim)
-        except UndefinedOutcomeError as exc:
-            self._pending_error = exc
-            return MoveResponse(accepted=True, claim_agreement=True)
-        return MoveResponse(accepted=True, terminal=self._current_terminal_info(), claim_agreement=True)
+            message = parse_turn_message(raw)
+        except ProtocolError as exc:
+            # A malformed turn is the SENDER's fault, and it is a technical
+            # loss for them — not something to absorb quietly.
+            logger.warning("refused a malformed inbound turn: %s", exc)
+            self._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=other_side(self.role))
+            return
 
-    def _handle_move_or_barrier(self, sender: Side, request: MoveRequest) -> MoveResponse:
-        if self.state.whose_turn is not sender:
-            return MoveResponse(accepted=False, reason="it is not the sender's turn per my local state")
+        if message.sender != other_side(self.role).value:
+            logger.warning("refused a turn claiming sender=%r", message.sender)
+            self._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=other_side(self.role))
+            return
 
-        action = request_to_action(request)
-        try:
-            new_state = apply_move(self.state, action.direction) if request.action_type == "move" else apply_barrier(self.state, action.target)
-        except IllegalActionError as exc:
-            self._finish(TerminalCondition.TECHNICAL_LOSS, offending_side=sender)
-            return MoveResponse(
-                accepted=False,
-                reason=str(exc),
-                terminal=TerminalInfo("technical_loss", *score_for(TerminalCondition.TECHNICAL_LOSS, self.config.scoring), sender.value),
-            )
+        # At-least-once delivery (kit SPEC §7.1): a retried push carries the
+        # SAME commit. Processing it twice would double-count a step and desync
+        # the audit, so a repeat is dropped rather than re-applied.
+        if message.commit in self._seen_commits:
+            logger.debug("dropped a duplicate turn for commit %s", message.commit[:8])
+            return
+        self._seen_commits.add(message.commit)
 
-        mismatch = _counter_mismatch(request, new_state)
-        if mismatch is not None:
-            return MoveResponse(accepted=False, divergence=mismatch)
+        async with self._lock:
+            self._absorb_turn(message)
+            self._resolve_claims(message)
 
-        entry = new_state.move_log[-1]
-        self.received_commits.record(
-            request.turn_number,
-            build_move_payload(
-                step=request.turn_number,
-                role=sender.value,
-                action_type=entry.action_type.value,
-                detail=entry.detail,
-                state=state_str(new_state.board.grid_size, _sender_position(new_state, sender), new_state.board.barriers),
-                smell_grid=request.smell_grid,
-                hint=request.hint,
-                hint_is_true=request.hint_is_true,
-            ),
-            request.commit,
-        )
+    def _absorb_turn(self, message: TurnMessage) -> None:
+        """Steps 1-3: audit commit, declared barrier, belief. Nothing here
+        touches an opponent position, because none was sent."""
+        self.received_commits.record(message.step, message.commit)
+        if message.barrier_placed:
+            row, col = message.barrier_placed
+            self.state = note_opponent_barrier(self.state, Position(row, col))
+        self._belief = absorb_opponent_signals(self._belief, self.state.board, message)
 
-        claim = detect_from_last_action(new_state)
-        my_condition = claim.condition if claim else None
-        self.state = new_state
-        self.log.record_action(self.state.move_log[-1])
-        self.watchdog.heartbeat()
-        self._belief = _absorb_opponent_signals(self._belief, self.state.board, request)
+    def _resolve_claims(self, message: TurnMessage) -> None:
+        """Step 4: the claim protocol — the ONLY way a capture or a survival is
+        established now that no shared board exists."""
+        # The thief confirmed my capture claim: I am the police and I won.
+        if message.claim_response and message.claim_response.get("caught"):
+            self._finish(TerminalCondition.CAPTURE_LANDING)
+            return
 
-        if my_condition != request.claimed_condition:
-            self._pending_error = DisputedOutcomeError(mine=my_condition, theirs=request.claimed_condition)
-            self._opponent_moved.set()
-            return MoveResponse(accepted=True, terminal=None, claim_agreement=False)
+        # The thief claims it survived its full step budget.
+        if message.win_claim:
+            self._finish(TerminalCondition.SURVIVAL)
+            return
 
-        if claim is not None:
-            self._finish_claim(claim)  # never UNDEFINED_CEILING here: that only ever arrives via "declare_terminal"
-        else:
-            self._advance_turn()
+        # The police claims my cell. Answer honestly on my NEXT turn — lying is
+        # pointless, the audit reveals my sealed position (docs/WIRE.md §5).
+        if message.capture_claim:
+            answer = answer_capture_claim(self.state, message.capture_claim)
+            self._pending_claim_response = answer
+            self._i_am_caught = bool(answer["caught"])
 
-        self._opponent_moved.set()
-        return MoveResponse(
-            accepted=True,
-            terminal=self._current_terminal_info(),
-            claim_agreement=(True if request.claimed_condition is not None else None),
-        )
+        self._take_turn_back()
+
+    def _other_side(self) -> Side:
+        return other_side(self.role)

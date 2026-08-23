@@ -31,7 +31,11 @@ from uoh_mh01.shared.peer_config import load_peer_config  # noqa: E402
 
 def _stalling(base_strategy, stall_turn: int, stall_seconds: float):
     def strategy(state, role):
-        if state.turn_number == stall_turn and state.whose_turn is role:
+        # `state` is an OwnGameState now, which has no `whose_turn`: a strategy
+        # is only ever called when it IS my turn, so the check is redundant.
+        # `step_number` counts MY OWN actions taken so far, so I am about to
+        # take my `stall_turn`'th one when it equals stall_turn - 1.
+        if state.step_number == stall_turn - 1:
             time.sleep(stall_seconds)
         return base_strategy(state, role)
 

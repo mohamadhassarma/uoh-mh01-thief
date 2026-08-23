@@ -1,7 +1,8 @@
 import asyncio
-import dataclasses
 
-import uoh_mh01.infra.mcp_client as mcp_client_module
+import pytest
+
+import uoh_mh01.infra.turn_sender as turn_sender_module
 from uoh_mh01.domain.board import Direction
 from uoh_mh01.domain.match import MoveAction
 from uoh_mh01.domain.state import Side
@@ -37,9 +38,9 @@ def test_taking_my_turn_seals_a_real_commit_record(config_factory):
 
 async def test_silent_opponent_produces_technical_loss_not_a_hang(config_factory, monkeypatch):
     async def _always_unresponsive(*args, **kwargs):
-        raise OpponentUnresponsiveError("submit_move", 0.01)
+        raise OpponentUnresponsiveError("receive_turn", 0.01)
 
-    monkeypatch.setattr(mcp_client_module, "send_move", _always_unresponsive)
+    monkeypatch.setattr(turn_sender_module, "send_turn", _always_unresponsive)
 
     config = config_factory(watchdog_timeout_sec=0.05)
     runtime = PeerRuntime(
@@ -60,64 +61,34 @@ async def test_silent_opponent_produces_technical_loss_not_a_hang(config_factory
     assert outcome.thief_score == config.scoring.technical_loss
 
 
-async def test_opponent_rejection_produces_technical_loss_for_the_sender(config_factory, monkeypatch):
-    from uoh_mh01.infra.protocol_response import MoveResponse
-
-    async def _rejects(*args, **kwargs):
-        return MoveResponse(accepted=False, reason="opponent said no")
-
-    monkeypatch.setattr(mcp_client_module, "send_move", _rejects)
-
-    config = config_factory()
-    runtime = PeerRuntime(
-        Side.POLICE,
-        config,
-        _peer_config(),
-        strategy=lambda state, side: MoveAction(Direction.E),
-    )
-    # Explicit, independent of whichever side FIRST_MOVER happens to be:
-    # this test is about MY OWN outbound send failing, which requires it to
-    # be MY turn.
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
-
-    outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
-
-    assert outcome.terminal_condition.value == "technical_loss"
-    assert outcome.offending_side is Side.POLICE  # I sent it; it was rejected; that's on me
+# RETIRED with the flip to ack-only tools:
+# `test_opponent_rejection_produces_technical_loss_for_the_sender` fed a
+# `MoveResponse(accepted=False)` back from the opponent. No such answer exists
+# any more — every tool returns `{"ok": True}` and nothing else (docs/WIRE.md
+# §1), so a receiver cannot reject a turn in-band. A receiver that considers a
+# turn malformed settles ITS OWN side as a technical loss against the sender
+# (tests/test_claim_protocol.py), and the sender learns only by timing out,
+# which `test_silent_opponent_produces_technical_loss_not_a_hang` covers.
 
 
-async def test_divergence_response_produces_unscored_technical_loss(config_factory, monkeypatch):
-    from uoh_mh01.infra.protocol_response import MoveResponse
-
-    async def _diverges(*args, **kwargs):
-        return MoveResponse(accepted=False, divergence="counter mismatch: sender claims police=9 thief=0, ...")
-
-    monkeypatch.setattr(mcp_client_module, "send_move", _diverges)
-
-    config = config_factory()
-    runtime = PeerRuntime(
-        Side.POLICE,
-        config,
-        _peer_config(),
-        strategy=lambda state, side: MoveAction(Direction.E),
-    )
-    # Explicit, independent of whichever side FIRST_MOVER happens to be:
-    # this test needs MY OWN send_move call to actually fire.
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
-
-    outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
-
-    assert outcome.terminal_condition.value == "technical_loss"
-    assert outcome.offending_side is None  # a divergence has no single attributable guilty party
-    assert outcome.police_score == config.scoring.technical_loss
-    assert outcome.thief_score == config.scoring.technical_loss
+# RETIRED with the mirrored model: `test_divergence_response_produces_unscored_
+# technical_loss` covered the counter-divergence path, where a receiver
+# cross-checked the sender's claimed action counters against its own mirrored
+# copy of the game. With no mirror there are no opponent counters to check, so
+# `MoveResponse.divergence` is never produced and the case is unreachable. A
+# rejected response is now covered in full by
+# `test_opponent_rejection_produces_technical_loss_for_the_sender` above, which
+# asserts the same terminal condition via the only path that still exists.
 
 
 async def test_turn_timeout_seconds_self_forfeits_independently_of_watchdog_timeout_sec(config_factory, monkeypatch):
-    async def _always_unresponsive(*args, **kwargs):
-        raise OpponentUnresponsiveError("submit_move", 0.01)
+    # The send must HANG, not fail: if it errored the send path would blame the
+    # opponent immediately and my own private budget would never get to fire,
+    # which is precisely what this test exists to check.
+    async def _hangs(*args, **kwargs):
+        await asyncio.sleep(60)
 
-    monkeypatch.setattr(mcp_client_module, "send_move", _always_unresponsive)
+    monkeypatch.setattr(turn_sender_module, "send_turn", _hangs)
 
     # watchdog_timeout_sec is deliberately loose: only my own private
     # turn_timeout_seconds should be able to fire this quickly.
@@ -131,7 +102,7 @@ async def test_turn_timeout_seconds_self_forfeits_independently_of_watchdog_time
     # Explicit, independent of whichever side FIRST_MOVER happens to be:
     # this test needs it to be MY turn so MY OWN turn_timeout_seconds budget
     # is what fires.
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
+    runtime.whose_turn = Side.POLICE
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -153,7 +124,7 @@ async def test_turn_timeout_seconds_forfeits_a_silent_opponent_before_the_looser
     # Explicit, independent of whichever side FIRST_MOVER happens to be:
     # this test is about waiting for an opponent who never moves, so it must
     # start on the OPPONENT's turn, not mine.
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
+    runtime.whose_turn = Side.POLICE
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -180,7 +151,7 @@ async def test_freeze_detected_with_no_narrower_timeout_still_resolves_to_techni
     )
     # Explicit, independent of whichever side FIRST_MOVER happens to be:
     # this test needs to start on the OPPONENT's (police's) turn.
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
+    runtime.whose_turn = Side.POLICE
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
@@ -197,9 +168,9 @@ async def test_unconfirmed_claim_after_opponent_silence_is_recorded_in_the_log(c
     # the claim from the record would make it useless for exactly the
     # dispute it's meant to help resolve later.
     async def _always_unresponsive(*args, **kwargs):
-        raise OpponentUnresponsiveError("submit_move", 0.01)
+        raise OpponentUnresponsiveError("receive_turn", 0.01)
 
-    monkeypatch.setattr(mcp_client_module, "send_move", _always_unresponsive)
+    monkeypatch.setattr(turn_sender_module, "send_turn", _always_unresponsive)
 
     # cop_start adjacent to thief_start so the very first move is a claimed capture.
     config = config_factory(grid_size=5, cop_start=(2, 2), thief_start=(2, 3), watchdog_timeout_sec=0.05)
@@ -212,10 +183,72 @@ async def test_unconfirmed_claim_after_opponent_silence_is_recorded_in_the_log(c
     # Explicit, independent of whichever side FIRST_MOVER happens to be:
     # this test needs MY OWN move (the claimed capture) to actually be
     # attempted, which requires it to be my turn.
-    runtime.state = dataclasses.replace(runtime.state, whose_turn=Side.POLICE)
+    runtime.whose_turn = Side.POLICE
 
     outcome = await asyncio.wait_for(runtime.run_match(), timeout=10)
 
     assert outcome.terminal_condition.value == "technical_loss"
     assert outcome.offending_side is Side.THIEF
     assert runtime.log.unconfirmed_claim == "capture_landing"
+
+
+async def test_a_brain_that_raises_surfaces_loudly_instead_of_becoming_a_technical_loss(config_factory):
+    """PRD-06 hardening regression. `_take_my_turn` used to wrap the strategy
+    call in `except Exception -> technical loss`. That is exactly how the
+    post-state-split `legal_actions` bug stayed invisible: it raised
+    AttributeError on EVERY turn, and every game reported a clean-looking
+    technical loss with zero sealed records and a vacuously-passing audit.
+
+    A brain that raises is a bug in our code, not a game event. It must escape.
+    """
+
+    def _broken(state, side):
+        return state.thief_pos  # OwnGameState has no such field, by design
+
+    config = config_factory()
+    runtime = PeerRuntime(Side.POLICE, config, _peer_config(), strategy=_broken)
+    runtime.whose_turn = Side.POLICE
+
+    with pytest.raises(AttributeError, match="thief_pos"):
+        await asyncio.wait_for(runtime.run_match(), timeout=10)
+
+    # And it was never dressed up as a playable result.
+    assert runtime.outcome is None
+    assert runtime.own_sealed_records == []
+
+
+def test_seal_step_zero_emits_a_real_declaration_record(config_factory):
+    """Rule #53 / book Table 12. `build_step_zero_payload` existed since
+    PRD-03 and was never called — the chain we revealed simply had no step 0
+    in it. Invisible from inside (neither of our own peers emitted one, so
+    every self-play audit passed) and visible only from outside, against the
+    kit's sparring peer, which reveals one."""
+    from uoh_mh01.domain.crypto import verify
+
+    runtime = PeerRuntime(Side.POLICE, config_factory(), _peer_config(), sub_game_number=3)
+    record = runtime.seal_step_zero()
+
+    assert runtime.own_sealed_records == [record]
+    assert record["step"] == 0
+    assert record["payload"]["type"] == "system_spec"
+    assert record["payload"]["sub_game_number"] == 3
+    assert record["payload"]["group_name"] == "Test Group"
+    assert record["payload"]["spec"]["os"]
+    # It must be re-hashable by the opponent — a declaration nobody can verify
+    # is not a declaration.
+    assert verify(record["payload"], record["nonce"], record["commit"])
+
+
+def test_the_step_zero_record_is_never_transmitted_as_a_turn(config_factory):
+    """DISCLOSURE-ONLY (kit SPEC §7.5 `not_on_this_wire`). It reaches the
+    opponent for the first time inside submit_audit, which is exactly why
+    infra/audit.py must not demand a live commit for it."""
+    runtime = PeerRuntime(Side.POLICE, config_factory(), _peer_config())
+    before = runtime.state_machine.phase
+    runtime.seal_step_zero()
+    # Sealing it played no turn: the step counter, the move log and the state
+    # machine are all untouched, so nothing can have been built into a
+    # TurnMessage from it.
+    assert runtime.state.step_number == 0
+    assert runtime.state.step_log == ()
+    assert runtime.state_machine.phase is before

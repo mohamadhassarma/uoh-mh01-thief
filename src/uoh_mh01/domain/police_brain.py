@@ -31,8 +31,9 @@ from __future__ import annotations
 
 from .board import ORTHOGONAL_DIRECTIONS
 from .board_metrics import best_local_hotspot, manhattan_distance, reachable_area
-from .brain_base import BrainBase, _OpponentPositionGuard
+from .brain_base import BrainBase
 from .match import Action, BarrierAction, MoveAction
+from .own_state import OwnGameState
 from .rules import destination_of, is_barrier_placement_legal, is_move_legal, legal_moves
 from .state import Side
 
@@ -41,22 +42,22 @@ _MIN_USEFUL_REDUCTION = 3  # a barrier must cut at least this many reachable cel
 
 
 class ContainmentPoliceBrain(BrainBase):
-    def _decide_move(self, obs: _OpponentPositionGuard, side: Side) -> Action:
-        hotspot, _mass = best_local_hotspot(obs.belief, obs.board, _HOTSPOT_RADIUS)
-        containment_open = obs.turn_number > obs.config.movement.max_moves // 2
+    def _decide_move(self, obs: OwnGameState, side: Side) -> Action:
+        hotspot, _mass = best_local_hotspot(self.belief, obs.board, _HOTSPOT_RADIUS)
+        containment_open = obs.step_number > obs.config.movement.max_moves // 2
         barrier = self._best_containment_barrier(obs, hotspot) if containment_open else None
         return barrier if barrier is not None else self._pursue(obs, hotspot)
 
-    def _pick_move(self, obs: _OpponentPositionGuard, side: Side) -> MoveAction:
-        hotspot, _mass = best_local_hotspot(obs.belief, obs.board, _HOTSPOT_RADIUS)
+    def _pick_move(self, obs: OwnGameState, side: Side) -> MoveAction:
+        hotspot, _mass = best_local_hotspot(self.belief, obs.board, _HOTSPOT_RADIUS)
         return self._pursue(obs, hotspot)
 
-    def _pursue(self, obs: _OpponentPositionGuard, target) -> MoveAction:
+    def _pursue(self, obs: OwnGameState, target) -> MoveAction:
         options = legal_moves(obs.board, obs.own_pos, obs.config.movement)
         best = min(options, key=lambda d: manhattan_distance(destination_of(obs.own_pos, d), target))
         return MoveAction(best)
 
-    def _best_containment_barrier(self, obs: _OpponentPositionGuard, hotspot) -> BarrierAction | None:
+    def _best_containment_barrier(self, obs: OwnGameState, hotspot) -> BarrierAction | None:
         board, movement = obs.board, obs.config.movement
         candidates = [
             target

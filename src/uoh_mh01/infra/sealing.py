@@ -7,16 +7,43 @@ implementation lives here.
 
 from __future__ import annotations
 
-from typing import Any
-
+from .. import __version__
 from ..domain.crypto import seal
-from ..domain.sealed_payload import build_move_payload, state_str
-from ..domain.state import Side
+from ..domain.hints import enforce_word_cap
+from ..domain.scent import advance_field, emit, serialize_field
+from ..domain.sealed_payload import build_move_payload, build_step_zero_payload, state_str
+from ..shared.sysinfo import collect_spec
 
 
 class _SealingMixin:
-    def _my_position(self) -> Any:
-        return self.state.cop_pos if self.role is Side.POLICE else self.state.thief_pos
+    def seal_step_zero(self) -> dict:
+        """Seal the step-0 host-spec declaration (rule #53 / book Table 12),
+        refreshed every sub-game. Called ONCE per sub-game, before the first
+        move.
+
+        DISCLOSURE-ONLY, and that is the whole subtlety: this record is never
+        transmitted as a turn, so the opponent sees it for the first time
+        inside `submit_audit` and can only ever check it for self-consistency
+        (infra/audit.py `STEP_ZERO`, kit SPEC §7.5 `not_on_this_wire`). It
+        joins `own_sealed_records` and therefore the reveal — which is the
+        point: a declaration nobody can re-hash is not a declaration.
+
+        `build_step_zero_payload` has existed since PRD-03 and was never
+        called. The gap was invisible from inside — our own audits passed
+        without it because neither side emitted one — and surfaced only from
+        the outside, when the kit's sparring peer revealed a step 0 we had no
+        live commit for.
+        """
+        payload = build_step_zero_payload(
+            spec=collect_spec(),
+            code_version=__version__,
+            group_name=self.peer_config.group_name,
+            sub_game_number=self.sub_game_number,
+        )
+        sealed = seal(payload)
+        record = {"step": 0, "payload": payload, "nonce": sealed["nonce"], "commit": sealed["commit"]}
+        self.own_sealed_records.append(record)
+        return record
 
     def _seal_own_record(
         self,
@@ -42,7 +69,7 @@ class _SealingMixin:
             role=self.role.value,
             action_type=action_type,
             detail=detail,
-            state=state_str(self.state.board.grid_size, self._my_position(), self.state.board.barriers),
+            state=state_str(self.state.board.grid_size, self.state.own_pos, self.state.board.barriers),
             smell_grid=smell_grid,
             hint=hint,
             hint_is_true=hint_is_true,
@@ -50,3 +77,22 @@ class _SealingMixin:
         sealed = seal(payload)
         self.own_sealed_records.append({"step": step, "payload": payload, "nonce": sealed["nonce"], "commit": sealed["commit"]})
         return sealed["commit"]
+
+    def _seal_step(self, entry, hint_override: str | None = None) -> tuple[str, dict, str, bool | None]:
+        """Deposit my scent, seal this step, and return what goes on the wire."""
+        deposit = emit(self.state.own_pos, self.state.board, self.config.pheromones)
+        self._own_scent_field = advance_field(self._own_scent_field, deposit, self.config.pheromones)
+        smell_grid = serialize_field(self._own_scent_field)
+        hint_text, hint_is_true = getattr(self._strategy, "last_hint", ("", None))
+        if hint_override is not None:
+            hint_text, hint_is_true = hint_override, True
+        hint_text = enforce_word_cap(hint_text, self.config.world.hint_max_words)
+        commit = self._seal_own_record(
+            step=entry.step,
+            action_type=entry.action_type.value,
+            detail=entry.detail,
+            smell_grid=smell_grid,
+            hint=hint_text,
+            hint_is_true=hint_is_true,
+        )
+        return commit, smell_grid, hint_text, hint_is_true

@@ -47,9 +47,10 @@ from __future__ import annotations
 
 from .board import Direction
 from .board_metrics import best_local_hotspot, manhattan_distance, reachable_area
-from .brain_base import BrainBase, _OpponentPositionGuard
+from .brain_base import BrainBase
 from .hints import generate_hint
 from .match import Action, MoveAction
+from .own_state import OwnGameState
 from .rules import destination_of, legal_moves
 from .state import Side
 
@@ -65,8 +66,8 @@ class EvasiveThiefBrain(BrainBase):
         self._last_direction: Direction | None = None
         self._streak = 0
 
-    def _pick_move(self, obs: _OpponentPositionGuard, side: Side) -> MoveAction:
-        hotspot, _mass = best_local_hotspot(obs.belief, obs.board, _HOTSPOT_RADIUS)
+    def _pick_move(self, obs: OwnGameState, side: Side) -> MoveAction:
+        hotspot, _mass = best_local_hotspot(self.belief, obs.board, _HOTSPOT_RADIUS)
         under_threat = manhattan_distance(obs.own_pos, hotspot) <= _SAFE_DISTANCE
         options = list(legal_moves(obs.board, obs.own_pos, obs.config.movement))
 
@@ -84,8 +85,8 @@ class EvasiveThiefBrain(BrainBase):
         self._last_direction = chosen
         return MoveAction(chosen)
 
-    def _generate_hint(self, obs: _OpponentPositionGuard, side: Side, action: Action) -> tuple[str, bool]:
-        hotspot, _mass = best_local_hotspot(obs.belief, obs.board, _HOTSPOT_RADIUS)
+    def _generate_hint(self, obs: OwnGameState, side: Side, action: Action) -> tuple[str, bool]:
+        hotspot, _mass = best_local_hotspot(self.belief, obs.board, _HOTSPOT_RADIUS)
         under_threat = manhattan_distance(obs.own_pos, hotspot) <= _SAFE_DISTANCE
         tell_truth = not (under_threat and self.hint_rng.random() < _LIE_PROBABILITY)
         return generate_hint(obs.own_pos, obs.board.grid_size, tell_truth=tell_truth, rng=self.hint_rng)
