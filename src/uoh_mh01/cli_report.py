@@ -13,8 +13,8 @@ from pathlib import Path
 
 from .domain.config import load_config
 from .infra.gmail_sender import LECTURER_REPORT_ADDRESS
-from .report import ledger, pipeline
-from .report.result_artifact import verify_mutual_agreement
+from .report import auto_send, pipeline
+from .report.result_artifact import missing_mandatory_fields, verify_mutual_agreement
 
 
 def cmd_report(args) -> int:
@@ -48,43 +48,55 @@ def cmd_report(args) -> int:
 
 
 def _send(path: Path, result: dict, config, args) -> int:
-    # A failed audit blocks only a COUNTED submission. A practice send to your
-    # own address is exactly how you would want to inspect a broken report.
-    if args.counted and not result["mutual_agreement"]["confirmed"]:
-        print("\nREFUSING TO SEND: at least one sub-game's audit did not pass.", file=sys.stderr)
-        return 3
+    if args.counted:
+        return _manual_fallback(result, config, args)
+    # A PRACTICE send: not counted, never the lecturer, never the ledger. The
+    # blocking rules deliberately do not apply — inspecting a broken report by
+    # mailing it to yourself is exactly what practice is for.
     try:
-        sent = pipeline.send_report(
-            path, result, config, counted=args.counted, sender=args.sender, to=args.to
-        )
+        sent = pipeline.send_report(path, result, config, counted=False, sender=args.sender, to=args.to)
     except Exception as exc:  # noqa: BLE001 - a CLI must print, not traceback
         print(f"\nsend failed: {exc}", file=sys.stderr)
         return 4
-    # Only a COUNTED send advances the ledger. A practice send to --to must
-    # never register as a played counted series (App. E rules 37/38).
-    opponent = next(g for g in result["groups"] if g != args.group_id) if args.group_id else None
-    if args.counted and opponent:
-        ledger.record_counted_series(
-            opponent_group_id=opponent,
-            game_id=result["game_id"],
-            game_uid=result["game_uid"],
-            ended_at=result["sub_games"][-1]["ended_at"],
-        )
-        print(f"ledger advanced: counted series against {opponent}")
-    print(f"sent to {args.to or LECTURER_REPORT_ADDRESS} (gmail message id {sent.get('id')})")
+    print(f"sent to {args.to} (gmail message id {sent.get('id')})")
     return 0
 
 
+def _manual_fallback(result: dict, config, args) -> int:
+    """`report --counted` is the FALLBACK path, and it routes through the SAME
+    `auto_send.send_counted_series` the peer process uses.
+
+    Book §9.3 requires the agent to mail its own report with no human step, so
+    reaching here by hand means the automatic send did not happen — say so
+    loudly rather than letting a manual send look like the normal route. Going
+    through one shared entry point is what makes the ledger interlock
+    universal: an earlier version wrote the ledger row itself, from here, and
+    that row was missing the status the duplicate-send check reads, so a second
+    manual send would not have been blocked at all.
+    """
+    print("\n" + "=" * 72, file=sys.stderr)
+    print("MANUAL FALLBACK: book section 9.3 requires the peer process to send this", file=sys.stderr)
+    print("report automatically at the end of a counted series. You are sending it by", file=sys.stderr)
+    print("hand, which means the automatic send did not happen. Worth finding out why.", file=sys.stderr)
+    print("=" * 72, file=sys.stderr)
+
+    outcome = auto_send.send_counted_series(
+        Path(args.log_dir or "logs"), result["game_id"], config, own_group_id=args.group_id, sender=args.sender
+    )
+    if outcome.sent:
+        print(f"sent to {LECTURER_REPORT_ADDRESS} (gmail message id {outcome.message_id})")
+        return 0
+    print(f"\nNOT SENT: {outcome.reason}", file=sys.stderr)
+    for blocker in outcome.blockers:
+        print(f"  - {blocker}", file=sys.stderr)
+    return 3
+
+
 def _warn_on_missing_mandatory_fields(result: dict) -> None:
-    """Book §9 makes three things mandatory. Say so loudly rather than mailing
-    a quietly incomplete report."""
-    missing = []
-    if "github" not in result["links"]:
-        missing.append("links.github (both groups' repo links)")
-    for row in result["sub_games"]:
-        absent = [gid for gid, commit in row["github_commit"].items() if not commit]
-        if absent:
-            missing.append(f"github_commit for {absent} in sub-game {row['sub_game_number']}")
+    """Book section 9's mandatory items. The automatic path REFUSES on these;
+    here they are only a warning, because a human is looking at the output and
+    a practice send of an incomplete report is a legitimate thing to want."""
+    missing = missing_mandatory_fields(result)
     if missing:
         print("\n  ! book section 9 mandatory fields not fully populated:")
         for item in missing:

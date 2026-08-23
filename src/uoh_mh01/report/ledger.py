@@ -15,6 +15,13 @@ from PRD-07:
 Only the FIRST meeting between two groups counts (App. E rule 52); warm-ups
 are permitted, recommended, and owe no report to anyone, so they must never
 reach this file either.
+
+IT IS ALSO THE DUPLICATE-SEND INTERLOCK. Book §9.3 requires each agent to mail
+its own report with no human in the loop, and names the danger in the same
+breath: automation is "ברכה ומלכודת כאחת" — a blessing and a trap — because a
+loop with a bug holds the keys to a live mail account. A row is written here
+BEFORE the send is attempted and updated after, so a second attempt on the
+same `game_uid` can see that one is already in flight or done and refuse.
 """
 
 from __future__ import annotations
@@ -24,6 +31,13 @@ from pathlib import Path
 from typing import Any
 
 LEDGER_PATH = Path("league") / "counted_games.json"
+
+# A row's lifecycle. `SENDING` is written before the Gmail call and is what
+# makes a duplicate automatic send impossible even if the process is killed
+# between the two writes.
+STATUS_SENDING = "sending"
+STATUS_SENT = "sent"
+STATUS_FAILED = "failed"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -37,6 +51,19 @@ def is_first_meeting(opponent_group_id: str, *, path: Path = LEDGER_PATH) -> boo
     return not any(row["opponent_group_id"] == opponent_group_id for row in _load(path)["counted_series"])
 
 
+def already_reported(game_uid: str, *, path: Path = LEDGER_PATH) -> bool:
+    """True once a send for this series has SUCCEEDED. A row left at
+    `sending` (the process died mid-send) or `failed` is not a success, so the
+    manual fallback can still retry it — but see `find`, which is what blocks a
+    second automatic attempt."""
+    row = find(game_uid, path=path)
+    return bool(row and row.get("status") == STATUS_SENT)
+
+
+def find(game_uid: str, *, path: Path = LEDGER_PATH) -> dict[str, Any] | None:
+    return next((row for row in _load(path)["counted_series"] if row["game_uid"] == game_uid), None)
+
+
 def counted_games_played(*, path: Path = LEDGER_PATH) -> int:
     """How many counted series this group has played — the honest answer to
     the book's Game-Count Declaration (ch.9.2.1). Our own count only: the
@@ -46,21 +73,29 @@ def counted_games_played(*, path: Path = LEDGER_PATH) -> int:
 
 
 def record_counted_series(
-    *, opponent_group_id: str, game_id: str, game_uid: str, ended_at: str, path: Path = LEDGER_PATH
+    *,
+    opponent_group_id: str,
+    game_id: str,
+    game_uid: str,
+    ended_at: str,
+    status: str = STATUS_SENT,
+    detail: str | None = None,
+    path: Path = LEDGER_PATH,
 ) -> dict[str, Any]:
-    """Append this series and persist. Idempotent on `game_uid`, so a re-run of
-    the report pipeline cannot inflate the count."""
+    """Insert or UPDATE this series' row and persist.
+
+    Keyed on `game_uid`, so re-running the pipeline can never inflate the
+    count — it only ever moves an existing row's `status` along
+    (`sending` -> `sent` / `failed`).
+    """
     ledger = _load(path)
-    if any(row["game_uid"] == game_uid for row in ledger["counted_series"]):
-        return ledger
-    ledger["counted_series"].append(
-        {
-            "opponent_group_id": opponent_group_id,
-            "game_id": game_id,
-            "game_uid": game_uid,
-            "ended_at": ended_at,
-        }
-    )
+    row = next((r for r in ledger["counted_series"] if r["game_uid"] == game_uid), None)
+    if row is None:
+        row = {"opponent_group_id": opponent_group_id, "game_id": game_id, "game_uid": game_uid}
+        ledger["counted_series"].append(row)
+    row.update(ended_at=ended_at, status=status)
+    if detail is not None:
+        row["detail"] = detail
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(ledger, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return ledger

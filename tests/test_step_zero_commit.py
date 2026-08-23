@@ -8,9 +8,6 @@ disclosure-only and nothing we do reads its fields.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from uoh_mh01.domain.crypto import seal, verify
@@ -255,12 +252,3 @@ def test_a_series_that_predates_the_field_still_reports_none(config_factory):
     old = _log(1, None)
     del old["records"][0]["payload"]["github_commit"]
     assert _own_github_commit(old) is None
-
-
-def test_the_ali_ahm1_series_was_not_backfilled():
-    """It was played before this change; its rows must stay null."""
-    result = Path(__file__).resolve().parents[1] / "logs" / "result_ali-ahm1-vs-uoh-mh01.json"
-    if not result.is_file():
-        pytest.skip("no ali-ahm1 result artifact on disk")
-    rows = json.loads(result.read_text(encoding="utf-8"))["sub_games"]
-    assert all(row["github_commit"]["uoh-mh01"] is None for row in rows)

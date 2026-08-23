@@ -1,4 +1,13 @@
 {
   "schema_version": "1.0",
-  "counted_series": []
+  "counted_series": [
+    {
+      "opponent_group_id": "ali-ahm1",
+      "game_id": "ali-ahm1-vs-uoh-mh01",
+      "game_uid": "feb39143-b9e2-850f-bbb1-a58be0f5d9cc",
+      "ended_at": "2026-08-23T21:23:31.429960+00:00",
+      "status": "sent",
+      "detail": "gmail message id 1a03085ccd9e11fa (sent 2026-08-24)"
+    }
+  ]
 }

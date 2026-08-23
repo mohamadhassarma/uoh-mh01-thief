@@ -132,3 +132,31 @@ def cmd_peer(args: argparse.Namespace) -> int:
         print(f"  Audit of opponent by me: {summary['audit_of_opponent_by_me']}")
     print(f"\nArtifacts written to: {out_dir}")
     return 0
+
+
+def _report_counted_series(args, config, peer_config, summaries, out_dir) -> None:
+    """Book §9.3: at the end of a counted series the agent mails its own report,
+    with no human step. A friendly sends nothing to anyone.
+
+    Deliberately not fatal. The games were played and their artifacts are on
+    disk; a failed send is recoverable with `report --counted`, whereas
+    crashing here would lose the printed summary of a series that really
+    happened.
+    """
+    if not getattr(args, "counted", False) or not summaries:
+        return
+    from .report import auto_send
+
+    print()
+    print("COUNTED series complete - sending the report automatically (book section 9.3)...")
+    outcome = auto_send.send_counted_series(
+        Path(out_dir), summaries[0]["game_id"], config, own_group_id=peer_config.group_id
+    )
+    if outcome.sent:
+        print(f"  sent to the lecturer (gmail message id {outcome.message_id})")
+        return
+    print(f"  NOT SENT: {outcome.reason}")
+    for blocker in outcome.blockers:
+        print(f"    - {blocker}")
+    print("  The artifacts are on disk. Fix the cause, then use the manual fallback:")
+    print(f"    uoh-mh01 report --game-id {summaries[0]['game_id']} --counted")

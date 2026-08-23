@@ -57,7 +57,15 @@ async def play_one_sub_game(
     # fact. Never sent as a turn — see _SealingMixin.seal_step_zero.
     peer_runtime.seal_step_zero()
 
-    summary: dict[str, Any] = {"sub_game_number": sub_game_number, "role": role.value}
+    # `game_id`/`game_uid` ride on every summary so the peer process can build
+    # and mail its own report at series end (book §9.3) without re-reading the
+    # declaration off disk to find out which series it just played.
+    summary: dict[str, Any] = {
+        "sub_game_number": sub_game_number,
+        "role": role.value,
+        "game_id": game_id,
+        "game_uid": game_uid,
+    }
     offending_side_str: str | None = None
     try:
         outcome = await peer_runtime.run_match()

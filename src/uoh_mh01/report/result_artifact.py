@@ -111,3 +111,23 @@ def _aggregate_core(result: dict[str, Any]) -> dict[str, Any]:
         "games_played_including_this",
     }
     return {k: v for k, v in result["final_result"].items() if k not in excluded}
+
+
+def missing_mandatory_fields(result: dict[str, Any]) -> list[str]:
+    """Book §9's three mandatory items, checked against a built report.
+
+    Shared by the CLI (which warns) and the automatic send (which REFUSES).
+    A report missing these is rejected by the lecturer's tooling and costs the
+    round's league points, so sending one automatically is strictly worse than
+    not sending: nobody is watching an automatic send to notice.
+    """
+    missing = []
+    if "github" not in result["links"]:
+        missing.append("links.github (both groups' repo links)")
+    for row in result["sub_games"]:
+        absent = sorted(gid for gid, commit in row["github_commit"].items() if not commit)
+        if absent:
+            missing.append(f"github_commit for {absent} in sub-game {row['sub_game_number']}")
+    if all(v is None for v in result["final_result"]["tokens_total_series"].values()):
+        missing.append("tokens_total_series (no group declared any consumption)")
+    return missing
