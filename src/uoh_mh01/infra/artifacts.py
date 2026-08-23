@@ -17,7 +17,7 @@ from typing import Any
 from ..domain.canonical import canonical_json
 
 
-def _now_iso() -> str:
+def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
@@ -69,8 +69,13 @@ class LogArtifactBuilder:
     role: str
     group_id: str
     opponent_group_id: str
+    # REQUIRED, and deliberately not a `default_factory=now_iso`. The builder is
+    # constructed at the END of a sub-game - after the match and after the audit
+    # exchange - so a default would stamp `started_at` within microseconds of
+    # `ended_at` and quietly report every sub-game as instantaneous. That is
+    # exactly what it did. The caller has to say when the sub-game began.
+    started_at: str
     records: list[dict[str, Any]] = field(default_factory=list)
-    started_at: str = field(default_factory=_now_iso)
 
     def add_record(self, step: int, payload: dict[str, Any], nonce: str, commit: str) -> None:
         self.records.append({"payload": payload, "nonce": nonce, "commit": commit, "step": step})
@@ -87,7 +92,7 @@ class LogArtifactBuilder:
         audit_failed_steps: list[int],
         audit_reason: str | None = None,
     ) -> dict[str, Any]:
-        ended_at = _now_iso()
+        ended_at = now_iso()
         return {
             "schema_version": "1.0",
             "game_id": self.game_id,

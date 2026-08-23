@@ -15,7 +15,10 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,7 +79,15 @@ def _own_move_letters(log: dict) -> list[str]:
     return [r["payload"]["detail"] for r in log["records"] if r["payload"].get("action_type") == "move"]
 
 
-def test_real_cli_series_runs_the_role_correct_brain_every_sub_game(tmp_path):
+@pytest.fixture(scope="module")
+def real_series(tmp_path_factory):
+    """One real two-process CLI series, shared by the tests below.
+
+    Module-scoped because it spawns two `python -m uoh_mh01 peer` subprocesses
+    and plays them to completion - the only place in the suite where a series
+    is produced by the real CLI rather than by calling into it.
+    """
+    tmp_path = tmp_path_factory.mktemp("real_series")
     police_port, thief_port = 18841, 18842
     config_json = tmp_path / "game.json"
     _write_config_json(config_json)
@@ -108,6 +119,11 @@ def test_real_cli_series_runs_the_role_correct_brain_every_sub_game(tmp_path):
     assert thief_proc.returncode == 0, f"thief process failed:\n{thief_out}\n---POLICE---\n{police_out}"
 
     game_id = "-vs-".join(sorted(["alpha", "bravo"]))
+    return police_dir, thief_dir, game_id
+
+
+def test_real_cli_series_runs_the_role_correct_brain_every_sub_game(real_series):
+    police_dir, thief_dir, game_id = real_series
     for sub_game_number in (1, 2):
         suffix = f"{game_id}_g{sub_game_number:02d}.json"
         police_log = json.loads((police_dir / f"log_{suffix}").read_text(encoding="utf-8"))
@@ -124,3 +140,26 @@ def test_real_cli_series_runs_the_role_correct_brain_every_sub_game(tmp_path):
         thief_moves = _own_move_letters(thief_side_log)
         assert police_moves and all(m == "N" for m in police_moves), (sub_game_number, police_moves)
         assert thief_moves and all(m == "S" for m in thief_moves), (sub_game_number, thief_moves)
+
+
+def test_every_sub_game_records_the_time_it_actually_took(real_series):
+    """`started_at` must be stamped when the sub-game BEGINS.
+
+    It used to come from the log builder's `default_factory`, and the builder is
+    constructed at the far end of the sub-game - after the match and after the
+    audit exchange. Every sub-game in a real series therefore reported a
+    duration of roughly 100 microseconds. Only a real series catches this: a
+    unit test on the builder passes whatever timestamps it is handed.
+    """
+    police_dir, thief_dir, game_id = real_series
+    for sub_game_number in (1, 2):
+        suffix = f"{game_id}_g{sub_game_number:02d}.json"
+        for side_dir in (police_dir, thief_dir):
+            summary = json.loads((side_dir / f"log_{suffix}").read_text(encoding="utf-8"))["summary"]
+            began = datetime.fromisoformat(summary["started_at"])
+            ended = datetime.fromisoformat(summary["ended_at"])
+            elapsed = (ended - began).total_seconds()
+            assert elapsed > 0.01, (
+                f"sub-game {sub_game_number} in {side_dir.name} reports a {elapsed}s duration - "
+                "started_at is being stamped at the same moment as ended_at"
+            )

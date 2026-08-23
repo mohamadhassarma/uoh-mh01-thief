@@ -13,7 +13,7 @@ from ..domain.brain_base import resolve_strategy
 from ..domain.match import UndefinedOutcomeError
 from ..domain.sealed_payload import build_audit_payload
 from ..domain.state import Side
-from .artifacts import LogArtifactBuilder, build_config_artifact, write_json
+from .artifacts import LogArtifactBuilder, build_config_artifact, now_iso, write_json
 from .audit import verify_revealed
 from .mcp_client import send_audit_reveal
 from .outcomes import DisputedOutcomeError
@@ -42,6 +42,14 @@ async def play_one_sub_game(
     from ..orchestrator import PeerRuntime  # local import: avoid a cycle with orchestrator's own imports
 
     game_id, game_uid = series.game_id, series.game_uid
+    # The sub-game's clock starts HERE, not where the log builder happens to be
+    # constructed - that is at the far end of this function, after the match and
+    # the audit exchange, and stamping there made every sub-game look
+    # instantaneous. Deliberately after this sub-game's handshake, which the
+    # caller has already done: the handshake is a rendezvous that can sit
+    # waiting for the opponent's process to appear, and folding that wait into
+    # the sub-game's duration would measure their punctuality, not the game.
+    started_at = now_iso()
     this_sub_game_strategy = strategy or _strategy_for_sub_game(peer_config, role, seed, sub_game_number)
     peer_runtime = PeerRuntime(
         role,
@@ -131,6 +139,7 @@ async def play_one_sub_game(
         role=role.value,
         group_id=my_msg.identity["group_id"],
         opponent_group_id=theirs.identity["group_id"],
+        started_at=started_at,
     )
     for r in peer_runtime.own_sealed_records:
         log_builder.add_record(r["step"], r["payload"], r["nonce"], r["commit"])
