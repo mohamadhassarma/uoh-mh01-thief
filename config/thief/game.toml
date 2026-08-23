@@ -9,7 +9,7 @@ repos = { cop = "https://github.com/mohamadhassarma/uoh-mh01-police", thief = "h
 
 [network]
 my_port = 8802                              # MY MCP server port
-opponent_url = "http://127.0.0.1:8801/mcp" # the only thing I know about the opponent
+opponent_url = "https://sputter-petted-fanciness.ngrok-free.dev/mcp" # the only thing I know about the opponent
 turn_timeout_seconds = 180
 
 # [strategy] -- optional: point at YOUR brain subclass (else the shipped heuristic runs)
