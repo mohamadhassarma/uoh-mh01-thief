@@ -71,6 +71,18 @@ class NetworkConfig:
 
 
 @dataclass(frozen=True)
+class GatekeeperConfig:
+    """`rate_limiter_gatekeeper` — present and signed in config/game.json since
+    stage 1, enforced by infra/gatekeeper.py since PRD-07."""
+
+    requests_per_minute: int
+    concurrent_requests: int
+    retry_backoff_sec: float
+    max_retries: int
+    queue_depth: int
+
+
+@dataclass(frozen=True)
 class GameConfig:
     board: BoardConfig
     movement: MovementConfig
@@ -78,3 +90,4 @@ class GameConfig:
     network: NetworkConfig
     world: WorldConfig
     pheromones: PheromoneConfig
+    gatekeeper: GatekeeperConfig

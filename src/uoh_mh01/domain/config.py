@@ -20,7 +20,15 @@ from .config_models import (
     ScoringConfig,
     WorldConfig,
 )
-from .config_parsers import parse_board, parse_movement, parse_network, parse_pheromones, parse_scoring, parse_world
+from .config_parsers import (
+    parse_board,
+    parse_gatekeeper,
+    parse_movement,
+    parse_network,
+    parse_pheromones,
+    parse_scoring,
+    parse_world,
+)
 
 __all__ = [
     "BoardConfig",
@@ -46,6 +54,7 @@ def parse_config(raw: dict[str, Any]) -> GameConfig:
         scoring=parse_scoring(raw),
         network=parse_network(raw),
         world=parse_world(raw),
+        gatekeeper=parse_gatekeeper(raw),
         pheromones=parse_pheromones(raw),
     )
 

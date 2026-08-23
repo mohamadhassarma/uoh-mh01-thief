@@ -12,6 +12,7 @@ import argparse
 from pathlib import Path
 
 from .cli_commands import DEFAULT_CONFIG_PATH, cmd_peer, cmd_selftest
+from .cli_report import cmd_authorize_gmail, cmd_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,25 @@ def build_parser() -> argparse.ArgumentParser:
     peer.add_argument("--log-dir", type=Path, default=None, help="Directory to write the series' JSON artifacts into (default: logs/)")
     peer.add_argument("--seed", type=int, default=None, help="RNG seed for reproducible placeholder move selection")
     peer.set_defaults(func=cmd_peer)
+
+    report = subparsers.add_parser("report", help="Build result_<game_id>.json from a played series (PRD-07)")
+    report.add_argument("--game-id", required=True, help="e.g. their-group-vs-uoh-mh01")
+    report.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Path to the signed config/game.json")
+    report.add_argument("--log-dir", type=Path, default=None, help="Where the series artifacts live (default: logs/)")
+    report.add_argument("--group-id", default="uoh-mh01", help="This group's id, used to identify the opponent")
+    report.add_argument("--sender", default="me", help="The From address for the report mail")
+    # NOT a boolean convenience. Without it the recipient resolves to an
+    # address that cannot be delivered at all, so a warm-up has nowhere to go
+    # even if every other check were bypassed (PRD-07).
+    report.add_argument("--counted", action="store_true", help="This is a COUNTED series: mail it to the lecturer")
+    # Exercising the real send path without submitting. Refused together with
+    # --counted: a counted report going anywhere but the lecturer is a lost game.
+    report.add_argument("--to", default=None, help="Send to this address instead (practice only; refused with --counted)")
+    report.set_defaults(func=cmd_report)
+
+    authorize = subparsers.add_parser("authorize-gmail", help="Run the OAuth consent flow once (opens a browser)")
+    authorize.add_argument("--secrets-dir", default=None, help="Default: the repo-external secrets directory")
+    authorize.set_defaults(func=cmd_authorize_gmail)
 
     return parser
 

@@ -7,7 +7,15 @@ from __future__ import annotations
 from typing import Any
 
 from .config_errors import ConfigError
-from .config_models import BoardConfig, MovementConfig, NetworkConfig, PheromoneConfig, ScoringConfig, WorldConfig
+from .config_models import (
+    BoardConfig,
+    GatekeeperConfig,
+    MovementConfig,
+    NetworkConfig,
+    PheromoneConfig,
+    ScoringConfig,
+    WorldConfig,
+)
 from .config_validators import (
     require,
     require_coord,
@@ -123,6 +131,18 @@ def parse_network(raw: dict[str, Any]) -> NetworkConfig:
         response_timeout_sec=require_positive_number(section, "response_timeout_sec", path),
         watchdog_timeout_sec=require_positive_number(section, "watchdog_timeout_sec", path),
         num_games=require_positive_int(section, "num_games", path),
+    )
+
+
+def parse_gatekeeper(raw: dict[str, Any]) -> GatekeeperConfig:
+    path = "rate_limiter_gatekeeper"
+    section = require_dict(raw, path, "$")
+    return GatekeeperConfig(
+        requests_per_minute=require_positive_int(section, "requests_per_minute", path),
+        concurrent_requests=require_positive_int(section, "concurrent_requests", path),
+        retry_backoff_sec=require_positive_number(section, "retry_backoff_sec", path),
+        max_retries=require_positive_int(section, "max_retries", path),
+        queue_depth=require_positive_int(section, "queue_depth", path),
     )
 
 

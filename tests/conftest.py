@@ -30,6 +30,8 @@ def make_raw_config(
     pheromone_decay: float = 0.1,
     pheromone_grid_size: int = 5,
     pheromone_min_center_intensity: float = 0.5,
+    requests_per_minute: int = 30,
+    max_retries: int = 3,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.2",
@@ -67,6 +69,16 @@ def make_raw_config(
             "response_timeout_sec": response_timeout_sec,
             "watchdog_timeout_sec": watchdog_timeout_sec,
             "num_games": num_games,
+        },
+        # Signed and present in config/game.json since stage 1; parsed since
+        # PRD-07 wired the Gatekeeper to it, so synthetic configs must carry it
+        # too or every one of them fails to load.
+        "rate_limiter_gatekeeper": {
+            "requests_per_minute": requests_per_minute,
+            "concurrent_requests": 2,
+            "retry_backoff_sec": 5,
+            "max_retries": max_retries,
+            "queue_depth": 100,
         },
     }
 
