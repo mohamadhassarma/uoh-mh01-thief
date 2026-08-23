@@ -68,11 +68,15 @@ class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin, _Sealin
         strategy: Strategy | None = None,
         *,
         sub_game_number: int = 1,
+        repo_commit: str | None = None,
     ):
         self.role = role
         self.config = config
         self.peer_config = peer_config
         self.sub_game_number = sub_game_number
+        # The exact commit playing this series (book ch.5), sealed into every
+        # step-0 record. None only when git could not answer.
+        self.repo_commit = repo_commit
         self._strategy = strategy or make_random_strategy(random.Random())
         # MY OWN state only. The opponent exists as `self._belief` and
         # nothing else — see domain/own_state.py.

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.state import Side, other_side
+from ..shared.build_commit import assert_declarable, repo_state
 from ..shared.peer_config import PeerConfig
 from .artifacts import build_declaration, write_json
 from .mcp_pool import close_all
@@ -32,6 +33,7 @@ async def run_series(
     strategy=None,
     seed: int | str | None = None,
     out_dir: str | Path | None = None,
+    counted: bool = False,
 ) -> list[dict[str, Any]]:
     """Returns one summary dict per sub-game played:
     `{"sub_game_number", "role", "terminal_condition", "police_score",
@@ -50,6 +52,13 @@ async def run_series(
     in others, and a role-specific brain must only ever run for its own
     role."""
     out_dir = Path(out_dir or "logs")
+    # BEFORE the server starts and before a single greeting goes out: a
+    # counted series must not begin at all if the commit it would declare is
+    # not the code that will run (book ch.5 / App. E rules 37/38). Refusing
+    # here costs nothing; refusing mid-series would forfeit a played game.
+    state = repo_state()
+    for warning in assert_declarable(state, counted=counted):
+        logger.warning("%s", warning)
     natural_role = role
     series_runtime = SeriesRuntime()
     server = build_server(series_runtime.inboxes, name=f"uoh-mh01-{role.value}")
@@ -91,6 +100,7 @@ async def run_series(
                     my_msg,
                     theirs,
                     out_dir,
+                    state.commit,
                 )
             )
 

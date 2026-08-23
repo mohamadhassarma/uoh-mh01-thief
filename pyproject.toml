@@ -51,7 +51,6 @@ omit = [
     "*/infra/series.py",
     "*/infra/series_subgame.py",
     "*/infra/series_runtime.py",
-    "*/shared/build_commit.py",
 ]
 
 [tool.coverage.report]

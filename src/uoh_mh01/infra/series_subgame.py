@@ -33,6 +33,7 @@ async def play_one_sub_game(
     my_msg,
     theirs,
     out_dir,
+    repo_commit=None,
 ) -> dict[str, Any]:
     """`role` and the per-sub-game greetings `my_msg`/`theirs` are decided by
     the caller, because the handshake now runs per sub-game and has to know the
@@ -42,7 +43,14 @@ async def play_one_sub_game(
 
     game_id, game_uid = series.game_id, series.game_uid
     this_sub_game_strategy = strategy or _strategy_for_sub_game(peer_config, role, seed, sub_game_number)
-    peer_runtime = PeerRuntime(role, config, peer_config, strategy=this_sub_game_strategy, sub_game_number=sub_game_number)
+    peer_runtime = PeerRuntime(
+        role,
+        config,
+        peer_config,
+        strategy=this_sub_game_strategy,
+        sub_game_number=sub_game_number,
+        repo_commit=repo_commit,
+    )
     series_runtime.start_sub_game(sub_game_number, peer_runtime)
     # Rule #53: the host-spec declaration is sealed BEFORE the first move, so
     # it is inside the chain the opponent audits rather than appended after the

@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     peer.add_argument("--peer-config", type=Path, default=None, help="Path to config/<role>/game.toml (default: derived from --role)")
     peer.add_argument("--log-dir", type=Path, default=None, help="Directory to write the series' JSON artifacts into (default: logs/)")
     peer.add_argument("--seed", type=int, default=None, help="RNG seed for reproducible placeholder move selection")
+    # A counted series REFUSES to start on a dirty tree; a friendly only warns
+    # (book ch.5 / App. E rules 37/38 — see shared/build_commit.py).
+    peer.add_argument("--counted", action="store_true", help="This series is COUNTED: refuse to start unless the tree is clean")
     peer.set_defaults(func=cmd_peer)
 
     report = subparsers.add_parser("report", help="Build result_<game_id>.json from a played series (PRD-07)")

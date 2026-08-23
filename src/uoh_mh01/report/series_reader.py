@@ -87,13 +87,18 @@ def sub_game_rows(
                 "result": summary["result"],
                 "winner_group": next((g for g, r in roles.items() if r == winner_role), None),
                 "tie": winner_role is None,
+                # OUR key is written LAST in each of these so that it wins a
+                # collision. The two ids are only ever equal in self-play,
+                # where the report is a degenerate artifact anyway — but there
+                # the opponent block is empty, so writing theirs last would
+                # silently replace a value we actually know with a null.
                 "github_commit": {
-                    own_gid: _own_github_commit(log),
                     # Their own declared claim about themselves, carried through
                     # unaltered. Absent stays absent — see UNCLAIMED.
                     opponent_gid: opponent.get("github_commit", UNCLAIMED),
+                    own_gid: _own_github_commit(log),
                 },
-                "tokens": {own_gid: own_tokens, opponent_gid: opponent.get("tokens_total", UNCLAIMED)},
+                "tokens": {opponent_gid: opponent.get("tokens_total", UNCLAIMED), own_gid: own_tokens},
                 "score": {own_gid: by_role[roles[own_gid]], opponent_gid: by_role[roles[opponent_gid]]},
                 "log_files": {own_gid: f"log_{game_id}_g{summary['sub_game_number']:02d}.json"},
                 "audit": {

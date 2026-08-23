@@ -100,12 +100,19 @@ def cmd_peer(args: argparse.Namespace) -> int:
 
     from .infra.negotiation import NegotiationRefusedError
     from .infra.series import run_series
+    from .shared.build_commit import DirtyWorkingTreeError
 
     print(f"Playing a {config.network.num_games}-sub-game series, role alternating (natural role: {role.value})...")
     print()
 
     try:
-        summaries = asyncio.run(run_series(role, config, peer_config, seed=args.seed, out_dir=str(out_dir)))
+        summaries = asyncio.run(
+            run_series(role, config, peer_config, seed=args.seed, out_dir=str(out_dir), counted=args.counted)
+        )
+    except DirtyWorkingTreeError as exc:
+        print("REFUSED before the handshake - nothing was played:")
+        print(f"  {exc}")
+        return 2
     except NegotiationRefusedError as exc:
         print("Handshake REFUSED — the series never started playing:")
         print(f"  {exc}")

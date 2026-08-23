@@ -39,6 +39,10 @@ class _SealingMixin:
             code_version=__version__,
             group_name=self.peer_config.group_name,
             sub_game_number=self.sub_game_number,
+            # Captured ONCE at series start, not re-read here: a commit that
+            # changed mid-series would mean different sub-games declaring
+            # different code, and the series is one submission.
+            github_commit=self.repo_commit,
         )
         sealed = seal(payload)
         record = {"step": 0, "payload": payload, "nonce": sealed["nonce"], "commit": sealed["commit"]}

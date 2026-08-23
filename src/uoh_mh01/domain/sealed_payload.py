@@ -53,10 +53,29 @@ def build_move_payload(
     }
 
 
-def build_step_zero_payload(*, spec: dict[str, Any], code_version: str, group_name: str, sub_game_number: int) -> dict[str, Any]:
+def build_step_zero_payload(
+    *,
+    spec: dict[str, Any],
+    code_version: str,
+    group_name: str,
+    sub_game_number: int,
+    github_commit: str | None = None,
+) -> dict[str, Any]:
     """Rule #53 (verified against the book PDF, Table 12): the step-zero
     declaration seals the host spec AND the commit hash that was played,
-    refreshed every sub-game — see PRD-03."""
+    refreshed every sub-game — see PRD-03.
+
+    `github_commit` is book ch.5's mandatory "exact commit that played", and
+    §9 requires the same id in the emailed report. It is ALWAYS present as a
+    key, carrying `None` when the commit genuinely could not be determined —
+    an absent key and a null value read the same to an opponent re-hashing the
+    record, but a stable key set keeps our own emitted shape constant.
+
+    The reference's step-0 record does not carry this field (it seals spec,
+    model, code_version and the sub-game number only). Adding it is safe by
+    construction: step 0 is disclosure-only, so the only thing anyone ever
+    does with this payload is re-hash it verbatim from the reveal.
+    """
     return {
         "step": 0,
         "type": "system_spec",
@@ -64,6 +83,7 @@ def build_step_zero_payload(*, spec: dict[str, Any], code_version: str, group_na
         "code_version": code_version,
         "group_name": group_name,
         "sub_game_number": sub_game_number,
+        "github_commit": github_commit,
     }
 
 
