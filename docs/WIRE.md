@@ -213,6 +213,30 @@ pinned agreement rather than failing.
 
 Kit agreement: `vectors/turn_message.json` → `audit_payload.required`.
 
+**`result_claim` is the LEAGUE's vocabulary, not ours.** Our engine
+distinguishes three capture families internally - `capture_landing`,
+`capture_barrier`, `capture_entrapment` - matching the three the interop SPEC
+names (SPEC.md:153-190: co-location, rule 46, rule 47). The league has one word
+for all three: SPEC.md says they all "settle CAPTURE" and puts the distinction
+in `claim_response`, and the reference emits a single `"capture"`
+(`ref_impl domain/scoring.py:13`, `peer/runtime.py:122`/`:127`).
+`domain/scoring.to_wire_result` is the only sanctioned way to produce this
+string; `.value` on a TerminalCondition is not. We shipped `capture_landing`
+here for six sub-games against a live opponent before this was caught - a
+conforming peer scores an unrecognised result 0/0 to both sides
+(`ref_impl domain/scoring.py:25-31`), so two honest peers would have described
+one sub-game two ways.
+
+**Open divergence, not yet resolved.** We also emit `"technical_loss"` and
+`"tie"`, which are NOT in the reference's result vocabulary (its non-terminal
+strings are `timeout`, `tamper_forfeit` and `stopped`; in the book,
+`technical_loss` is a *scoring config key*, not a result). Both score 0/0 on
+either reading, so this is a labelling question rather than a scoring one, and
+mapping ours onto theirs needs a decision we have not made: our TECHNICAL_LOSS
+covers watchdog timeouts, turn-budget overruns and protocol divergence, which
+the reference would split between `timeout` and `tamper_forfeit`. Neither
+string has ever actually been emitted in a real series.
+
 **`records` is the FULL sealed chain including payloads and nonces**, so the
 opponent re-hashes every step with its own serializer
 (`vectors/turn_message.json` → `audit_payload.field_notes.records`). The

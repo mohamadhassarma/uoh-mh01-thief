@@ -12,6 +12,7 @@ from typing import Any
 
 from ..domain.brain_base import resolve_strategy
 from ..domain.match import UndefinedOutcomeError
+from ..domain.scoring import to_wire_result
 from ..domain.sealed_payload import build_audit_payload
 from ..domain.state import Side
 from ..gui.live_state import LIVE_STATE_NAME, LiveStatePublisher
@@ -89,7 +90,11 @@ async def play_one_sub_game(
             thief_score=outcome.thief_score,
             offending_side=offending_side_str,
         )
-        result_str, winner_role = outcome.terminal_condition.value, _winner_role(outcome)
+        # `to_wire_result`, never `.value`: this one string becomes BOTH the
+        # `result_claim` we send in the audit reveal and `summary.result` in the
+        # log artifact the report is built from. Our three capture families all
+        # leave here as the league's single "capture" (domain/scoring.py).
+        result_str, winner_role = to_wire_result(outcome.terminal_condition), _winner_role(outcome)
     except UndefinedOutcomeError as exc:
         summary["undefined_outcome"] = str(exc)
         result_str, winner_role = "undefined", None

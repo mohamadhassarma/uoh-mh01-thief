@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from .board import Position
+from .scoring import check_result_vocabulary
 
 
 def state_str(grid_size: int, position: Position, barriers: frozenset[Position]) -> str:
@@ -95,4 +96,5 @@ def build_audit_payload(*, sender: str, records: list[dict[str, Any]], result_cl
     (which sub-game this belongs to) rides OUTSIDE this object, as a tolerated
     extra key on the envelope, so the contract shape stays exact.
     """
+    check_result_vocabulary(result_claim, "the audit reveal (result_claim)")
     return {"sender": sender, "records": records, "result_claim": result_claim}

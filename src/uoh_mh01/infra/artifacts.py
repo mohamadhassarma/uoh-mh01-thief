@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.canonical import canonical_json
+from ..domain.scoring import check_result_vocabulary
 
 
 def now_iso() -> str:
@@ -92,6 +93,7 @@ class LogArtifactBuilder:
         audit_failed_steps: list[int],
         audit_reason: str | None = None,
     ) -> dict[str, Any]:
+        check_result_vocabulary(result or "", "the log artifact (summary.result)")
         ended_at = now_iso()
         return {
             "schema_version": "1.0",

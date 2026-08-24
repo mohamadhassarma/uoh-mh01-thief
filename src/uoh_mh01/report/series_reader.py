@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.config import GameConfig
-from ..domain.scoring import TerminalCondition, score_for
+from ..domain.scoring import score_for_result
 from ..domain.state import Side, other_side
 
 # A count nobody has actually claimed. Distinct from 0, which is a claim.
@@ -71,8 +71,8 @@ def sub_game_rows(
         summary = log["summary"]
         own_role = Side(summary["role"])
         roles = {own_gid: own_role.value, opponent_gid: other_side(own_role).value}
-        police, thief = score_for(
-            TerminalCondition(summary["result"]),
+        police, thief = score_for_result(
+            summary["result"],
             config.scoring,
             offending_side=Side(summary["offending_side"]) if summary["offending_side"] else None,
         )
