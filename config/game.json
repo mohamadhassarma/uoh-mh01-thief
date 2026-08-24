@@ -1,6 +1,6 @@
 {
   "schema_version": "1.2",
-  "agreed_between": ["ali-ahm1", "uoh-mh01"],
+  "agreed_between": ["AmalOnly", "uoh-mh01"],
   "board_and_agents": {
     "grid_size": 7,
     "num_agents": 2,
