@@ -6,17 +6,49 @@ from .conftest import REAL_CONFIG_PATH, make_raw_config
 
 
 def test_real_config_loads_and_validates():
+    """The SHIPPED contract must load and be internally coherent.
+
+    Deliberately does NOT pin the negotiated values. Most of what this test
+    used to assert is in the flat 14-key set the pre-game handshake signs
+    (`shared/terms.py`) - board size, both starts, `barriers_max`,
+    `max_steps`, `num_games` - and the timeouts are agreed per opponent out
+    of band. Pinning them made the suite fail the moment we legitimately
+    agreed 180/180 with khm-mn17: a red that says nothing about the code and
+    everything about a test asserting one particular negotiation.
+
+    What IS asserted here is what the parser cannot already guarantee.
+    `config_validators` enforces types, positivity and coordinate bounds, so
+    repeating those would be vacuous; these are the cross-field properties it
+    does not check.
+    """
     config = load_config(REAL_CONFIG_PATH)
-    assert config.board.grid_size == 7
-    assert config.board.thief_start == (3, 3)
-    assert config.board.cop_start == (0, 0)
-    assert config.movement.max_barriers == 14
-    assert config.movement.max_moves == 35
-    assert config.movement.survival_threshold == 35
-    assert config.network.response_timeout_sec == 30
-    assert config.network.watchdog_timeout_sec == 60
-    assert config.scoring.capture_cop == 20
-    assert config.scoring.tie_score == 2
+
+    # The two agents cannot start on the same cell - that would be a capture
+    # before either side has moved.
+    assert config.board.cop_start != config.board.thief_start
+
+    # A freeze detector tighter than a single request would fire during a
+    # perfectly legitimate call.
+    assert config.network.watchdog_timeout_sec >= config.network.response_timeout_sec
+
+    # App. F table 20's scoring is league-wide and fixed - it is NOT part of
+    # the signed terms and no opponent can negotiate it, so a change here
+    # would be a real defect rather than a new agreement.
+    assert (config.scoring.capture_cop, config.scoring.capture_thief) == (20, 5)
+    assert (config.scoring.survival_cop, config.scoring.survival_thief) == (5, 10)
+    assert (config.scoring.tie_score, config.scoring.technical_loss) == (2, 0)
+
+
+def test_the_shipped_config_can_actually_be_negotiated():
+    """The strongest "this config is valid" check available: it must produce
+    the exact flat term set a handshake signs. Both outside authorities do a
+    strict dict-equality check on it, so a missing or extra key refuses the
+    handshake against every conformant opponent."""
+    from uoh_mh01.shared.terms import terms_from_config
+
+    terms = terms_from_config(load_config(REAL_CONFIG_PATH))
+    assert len(terms) == 14
+    assert not [key for key, value in terms.items() if value is None]
 
 
 def test_missing_field_raises_clearly():

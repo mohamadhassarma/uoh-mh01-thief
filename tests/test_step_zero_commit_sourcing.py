@@ -14,7 +14,6 @@ merely unread - it was unreachable.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -175,9 +174,19 @@ def test_a_peer_that_declares_it_nowhere_stays_null():
     assert all(r["github_commit"]["them"] is None for r in rows)
 
 
-def test_the_khm_mn17_series_is_not_backfilled():
-    """Their chain was discarded before the fix and their commit only reaches us
-    out of band. An unverified value in a graded report is the thing to avoid."""
+def test_a_real_foreign_peers_commit_is_recovered_from_their_step_zero():
+    """Against a real opponent's artifacts, not a fixture we wrote.
+
+    This replaces an earlier test that pinned the khm-mn17 series in its
+    PRE-FIX state ("their chain was discarded, so this stays null"). That was
+    a snapshot, not a property: the moment the series was legitimately
+    replayed with the fix in place it went red, for the same reason the two
+    config tests did. What is durable is the PROPERTY - when their chain is
+    present, their commit comes out of it, and it never comes from thin air.
+
+    The no-fabrication guarantee is covered independently, on synthetic input,
+    by `test_a_peer_that_declares_it_nowhere_stays_null`.
+    """
     logs_dir = REPO_ROOT / "logs"
     declaration_path = logs_dir / "declaration_khm-mn17-vs-uoh-mh01.json"
     if not declaration_path.is_file():
@@ -186,6 +195,18 @@ def test_the_khm_mn17_series_is_not_backfilled():
 
     declaration, logs = load_series(logs_dir, "khm-mn17-vs-uoh-mh01")
     rows = sub_game_rows(declaration, logs, CONFIG, own_tokens=0)
-    assert all(row["github_commit"]["khm-mn17"] is None for row in rows)
-    assert all(row["github_commit"]["uoh-mh01"] for row in rows), "ours still reads"
-    assert not any("opponent_records" in json.dumps(log) for log in logs), "no chain to read"
+
+    # The negotiate identity does NOT carry it - so anything we report for them
+    # can only have come from their sealed step-0.
+    assert "github_commit" not in declaration["groups"]["opponent"]
+
+    for row, log in zip(rows, logs, strict=True):
+        theirs = row["github_commit"]["khm-mn17"]
+        if log.get("opponent_records"):
+            assert theirs == step_zero_commit(log["opponent_records"])
+            assert theirs and len(theirs) == 40, theirs
+        else:
+            # A sub-game played before the fix keeps no chain, and absent
+            # stays absent rather than being back-filled from anywhere.
+            assert theirs is None
+        assert row["github_commit"]["uoh-mh01"], "ours still reads"

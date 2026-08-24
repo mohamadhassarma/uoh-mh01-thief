@@ -8,6 +8,14 @@
       "ended_at": "2026-08-23T21:23:31.429960+00:00",
       "status": "sent",
       "detail": "gmail message id 1a03085ccd9e11fa (sent 2026-08-24)"
+    },
+    {
+      "opponent_group_id": "khm-mn17",
+      "game_id": "khm-mn17-vs-uoh-mh01",
+      "game_uid": "7822a5c6-70ef-70c0-b417-84a0e9635750",
+      "ended_at": "2026-08-24T17:24:26.712785+00:00",
+      "status": "sent",
+      "detail": "gmail message id 1a034cd63d0ba56c"
     }
   ]
 }

@@ -1,4 +1,4 @@
-# PLAN — Development Plan (Police agent)
+# PLAN — Development Plan (Thief agent)
 
 Development follows the seven-stage priority ladder from Ch. 10.3 of the rulebook.
 Each stage gets its own PRD file, is built and tested in isolation, and is verified
@@ -9,11 +9,26 @@ moment confined to the most recently added layer.
 |---|-------|-----|--------|
 | 1 | Base game logic (single process, local board) | `prd/PRD-01-base-logic.md` | Done |
 | 2 | Basic FastMCP infrastructure over localhost | `prd/PRD-02-mcp-infra.md` | Done |
-| 3 | Commit-Reveal integrity (SHA-256) + audit log | `prd/PRD-03-commit-reveal.md` | Implementation done, not committed |
-| 4 | Pheromones, scent field, belief map | `prd/PRD-04-belief.md` | Implementation done, not committed |
-| 5 | Strategy brain + verbal layer (LLM) | `prd/PRD-05-strategy.md` | Not started |
-| 6 | GUI + Replay viewer | `prd/PRD-06-gui-replay.md` | Implementation done |
-| 7 | Public tunnel, Gatekeeper, Gmail reporting | `prd/PRD-07-live-league.md` | Not started |
+| 3 | Commit-Reveal integrity (SHA-256) + audit log | `prd/PRD-03-commit-reveal.md` | Done |
+| 4 | Pheromones, scent field, belief map | `prd/PRD-04-belief.md` | Done |
+| 5 | Strategy brain + verbal layer | `prd/PRD-05-strategy.md` | Done |
+| 6 | GUI + Replay viewer | `prd/PRD-06-gui-replay.md` | Done |
+| 7 | Public tunnel, Gatekeeper, Gmail reporting | `prd/PRD-07-live-league.md` | Done |
+
+All seven stages are implemented, committed, and have been exercised against
+real opponents in live series - not only against our own two peers.
+
+Two caveats recorded rather than smoothed over:
+
+- **Stage 5's "verbal layer" is deliberately not an LLM.** Hints are
+  template-generated and cost zero tokens (`domain/hints.py`, PRD-05 section
+  C). Being template-based is what makes a hint *decodable* by the receiver,
+  which is what lets `belief.apply_hint` be called with a real claim instead
+  of remaining a theoretical hook. This was a decision, not an omission.
+- **PRD-03 and PRD-07 still have unticked acceptance-criteria boxes** even
+  though the work behind them is done and in production use. By the
+  definition below, that is the paperwork lagging the code; the boxes should
+  be walked through and ticked before submission.
 
 ## Definition of done per stage
 
