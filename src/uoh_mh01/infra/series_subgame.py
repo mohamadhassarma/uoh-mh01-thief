@@ -153,6 +153,9 @@ async def play_one_sub_game(
     )
     for r in peer_runtime.own_sealed_records:
         log_builder.add_record(r["step"], r["payload"], r["nonce"], r["commit"])
+    # Keep what we just audited. It is the only copy of their step-0, and with
+    # it the only copy of the commit rule 53 binds them to for THIS sub-game.
+    log_builder.opponent_records = list(their_payload.get("records", [])) if their_payload else []
     write_json(
         out_dir / f"log_{game_id}_g{sub_game_number:02d}.json",
         log_builder.build(

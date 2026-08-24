@@ -15,7 +15,7 @@ from uoh_mh01.domain.sealed_payload import build_step_zero_payload
 from uoh_mh01.domain.state import Side
 from uoh_mh01.infra.audit import ReceivedCommitLog, verify_revealed
 from uoh_mh01.orchestrator import PeerRuntime
-from uoh_mh01.report.series_reader import _own_github_commit, sub_game_rows
+from uoh_mh01.report.series_reader import step_zero_commit, sub_game_rows
 from uoh_mh01.shared.build_commit import (
     DirtyWorkingTreeError,
     RepoState,
@@ -251,4 +251,6 @@ def test_a_series_that_predates_the_field_still_reports_none(config_factory):
     null, not the version we happen to be on now."""
     old = _log(1, None)
     del old["records"][0]["payload"]["github_commit"]
-    assert _own_github_commit(old) is None
+    # `_own_github_commit` became `step_zero_commit`, which reads either
+    # side's chain and both conformant step-0 spellings.
+    assert step_zero_commit(old["records"]) is None

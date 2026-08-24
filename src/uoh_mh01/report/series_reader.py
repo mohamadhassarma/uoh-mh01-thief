@@ -40,20 +40,38 @@ def load_series(logs_dir: Path, game_id: str) -> tuple[dict[str, Any], list[dict
     )
 
 
-def _own_github_commit(log: dict[str, Any]) -> str | None:
-    """The commit this side actually played, from its sealed step-0 record.
+# The two conformant step-0 spellings. They differ in `type` - ours is the
+# reference's inline `system_spec`, the kit's slim one is `step_zero` - but both
+# put `step: 0` and a top-level `github_commit` in the payload, so keying on the
+# step number accepts either. SPEC is explicit that a reader must
+# (interop_kit/SPEC.md 7.2, and the kit's own generator emits one of each).
+STEP_ZERO_TYPES = ("step_zero", "system_spec")
+
+
+def _is_step_zero(record: dict[str, Any]) -> bool:
+    payload = record.get("payload") or {}
+    return payload.get("step") == 0 or record.get("step") == 0 or payload.get("type") in STEP_ZERO_TYPES
+
+
+def step_zero_commit(records: list[dict[str, Any]] | None) -> str | None:
+    """The `github_commit` from a sealed chain's step-0 record.
 
     Book ch.5 makes this mandatory in the step-zero declaration and requires it
-    to reach the emailed JSON as `github_commit` (§9). Returns None when the
-    record predates us sealing it — NEVER a guess: a fabricated commit hash in
-    a league report is precisely the false declaration App. E rules 37/38
-    punish, and "the version we happen to be on now" is not the version that
-    played.
+    to reach the emailed JSON as `github_commit` (section 9). Rule 53 binds the
+    PER-ROLE, PER-SUB-GAME commit, which is why it is read from each sub-game's
+    own chain and not from the series-level declaration: the identity block
+    carries one headline value for the whole series, which is a different claim.
+
+    Returns None when the chain has no step-0 or it carries no commit - NEVER a
+    guess. A fabricated commit hash in a league report is precisely the false
+    declaration App. E rules 37/38 punish, and "the version we happen to be on
+    now" is not the version that played.
     """
-    for record in log.get("records", []):
-        payload = record.get("payload", {})
-        if payload.get("step") == 0:
-            return payload.get("github_commit")
+    for record in records or []:
+        if _is_step_zero(record):
+            commit = (record.get("payload") or {}).get("github_commit")
+            if commit:
+                return commit
     return None
 
 
@@ -93,10 +111,18 @@ def sub_game_rows(
                 # the opponent block is empty, so writing theirs last would
                 # silently replace a value we actually know with a null.
                 "github_commit": {
-                    # Their own declared claim about themselves, carried through
-                    # unaltered. Absent stays absent — see UNCLAIMED.
-                    opponent_gid: opponent.get("github_commit", UNCLAIMED),
-                    own_gid: _own_github_commit(log),
+                    # THEIRS: from their sealed step-0 for THIS sub-game, which
+                    # is what rule 53 binds. The negotiate identity is a
+                    # fallback only - it holds one series headline, and a peer
+                    # that seals its commit (as the SPEC requires) may not put
+                    # it there at all. Reading identity first is how six
+                    # sub-games against khm-mn17 came back null while their
+                    # reveal carried the commit all along.
+                    opponent_gid: (
+                        step_zero_commit(log.get("opponent_records"))
+                        or opponent.get("github_commit", UNCLAIMED)
+                    ),
+                    own_gid: step_zero_commit(log.get("records")),
                 },
                 "tokens": {opponent_gid: opponent.get("tokens_total", UNCLAIMED), own_gid: own_tokens},
                 "score": {own_gid: by_role[roles[own_gid]], opponent_gid: by_role[roles[opponent_gid]]},

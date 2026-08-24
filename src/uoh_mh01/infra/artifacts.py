@@ -77,6 +77,13 @@ class LogArtifactBuilder:
     # exactly what it did. The caller has to say when the sub-game began.
     started_at: str
     records: list[dict[str, Any]] = field(default_factory=list)
+    # The OPPONENT's revealed chain, kept rather than discarded after the
+    # audit. Their sealed step-0 is the only place their per-sub-game
+    # `github_commit` exists (rule 53); verifying it in memory and throwing
+    # it away left that field unreachable at report-build time. Key name
+    # matches the interop kit's own artifacts
+    # (examples/pairing-artifacts/log_*.json, schema 1.1).
+    opponent_records: list[dict[str, Any]] = field(default_factory=list)
 
     def add_record(self, step: int, payload: dict[str, Any], nonce: str, commit: str) -> None:
         self.records.append({"payload": payload, "nonce": nonce, "commit": commit, "step": step})
@@ -96,7 +103,8 @@ class LogArtifactBuilder:
         check_result_vocabulary(result or "", "the log artifact (summary.result)")
         ended_at = now_iso()
         return {
-            "schema_version": "1.0",
+            # 1.1 adds `opponent_records`, matching the kit's own log schema.
+            "schema_version": "1.1",
             "game_id": self.game_id,
             "game_uid": self.game_uid,
             "links": _links(self.game_id),
@@ -125,6 +133,7 @@ class LogArtifactBuilder:
                 },
             },
             "records": self.records,
+            "opponent_records": self.opponent_records,
         }
 
 
