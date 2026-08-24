@@ -21,6 +21,7 @@ from .mcp_server import build_server
 from .series_handshake import SeriesIdentity, negotiate_sub_game
 from .series_runtime import SeriesRuntime
 from .series_subgame import play_one_sub_game
+from .server_noise import silence_lifespan_cancellation
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,9 @@ async def run_series(
         logger.warning("%s", warning)
     natural_role = role
     series_runtime = SeriesRuntime()
+    # We cancel this server task ourselves once the series is over; uvicorn
+    # reports that cancellation as an ERROR traceback (infra/server_noise.py).
+    silence_lifespan_cancellation()
     server = build_server(series_runtime.inboxes, name=f"uoh-mh01-{role.value}")
     server_task = asyncio.create_task(
         server.run_http_async(

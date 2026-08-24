@@ -18,6 +18,15 @@ from .report.result_artifact import missing_mandatory_fields, verify_mutual_agre
 
 
 def cmd_report(args) -> int:
+    correction = getattr(args, "correction", None)
+    if correction is not None and not args.counted:
+        print(
+            "--correction supersedes an already-sent COUNTED report, so it needs --counted. "
+            "A friendly never touches the ledger and is never blocked by it.",
+            file=sys.stderr,
+        )
+        return 2
+
     config = load_config(args.config)
     logs_dir = Path(args.log_dir or "logs")
     try:
@@ -55,7 +64,10 @@ def _send(path: Path, result: dict, config, args) -> int:
     and it wrote its own ledger row without the status the duplicate-send check
     reads, so a repeat manual send would not have been blocked at all.
     """
-    if args.counted:
+    correction = getattr(args, "correction", None)
+    if correction is not None:
+        _correction_banner(correction, result["game_uid"], Path(args.log_dir or "logs"))
+    elif args.counted:
         _fallback_banner()
 
     outcome = auto_send.send_counted_series(
@@ -66,9 +78,12 @@ def _send(path: Path, result: dict, config, args) -> int:
         counted=args.counted,
         sender=args.sender,
         to=args.to,
+        correction=correction,
     )
     if outcome.sent:
         print(f"sent to {outcome.recipient or LECTURER_REPORT_ADDRESS} (gmail message id {outcome.message_id})")
+        if outcome.attempt > 1:
+            print(f"recorded as attempt {outcome.attempt}, superseding attempt {outcome.attempt - 1}.")
         if not outcome.counted:
             print("FRIENDLY: nothing was submitted and the league ledger is untouched.")
         return 0
@@ -76,6 +91,22 @@ def _send(path: Path, result: dict, config, args) -> int:
     for blocker in outcome.blockers:
         print(f"  - {blocker}", file=sys.stderr)
     return 3
+
+
+def _correction_banner(reason: str, game_uid: str, logs_dir: Path) -> None:
+    """A correction is a second counted report for one series. It must be
+    impossible to do by accident and obvious in the log when it is done."""
+    from .report import ledger
+
+    print("\n" + "=" * 72, file=sys.stderr)
+    print("DECLARED CORRECTION - a SECOND counted report for a series already sent.", file=sys.stderr)
+    print(f"  game_uid: {game_uid}", file=sys.stderr)
+    print(f"  reason:   {reason}", file=sys.stderr)
+    for row in ledger.attempts(game_uid):
+        print(f"  existing: attempt {ledger.attempt_of(row)} {row.get('status')} - {row.get('detail')}", file=sys.stderr)
+    print("The earlier row is preserved untouched; this send is appended as a new", file=sys.stderr)
+    print("attempt. Make sure the lecturer has been told a correction is coming.", file=sys.stderr)
+    print("=" * 72, file=sys.stderr)
 
 
 def _fallback_banner() -> None:

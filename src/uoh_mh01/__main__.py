@@ -12,6 +12,8 @@ import argparse
 from pathlib import Path
 
 from .cli_commands import DEFAULT_CONFIG_PATH, cmd_peer, cmd_selftest
+from .cli_gui import cmd_gui
+from .cli_replay import cmd_replay
 from .cli_report import cmd_authorize_gmail, cmd_report
 
 
@@ -61,7 +63,31 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--group-id", default="uoh-mh01", help="This group's id, used to identify the opponent")
     report.add_argument("--sender", default="me", help="The From address for the report mail")
     _recipient_modes(report, counted_help="This is a COUNTED series: mail it to the lecturer")
+    # DECLARED CORRECTION. Deliberately on `report` only and never on `peer`:
+    # a correction is a human deciding an already-delivered report was wrong,
+    # so the automatic sender must never be able to authorize one for itself.
+    report.add_argument(
+        "--correction",
+        metavar="REASON",
+        default=None,
+        help="Supersede an already-sent counted report. The reason is recorded in the ledger.",
+    )
     report.set_defaults(func=cmd_report)
+
+    replay = subparsers.add_parser("replay", help="Re-verify a played series' sealed chains from disk (book ch.7)")
+    replay.add_argument("--game-id", required=True, help="e.g. their-group-vs-uoh-mh01")
+    replay.add_argument("--log-dir", type=Path, default=None, help="Where the series artifacts live (default: logs/)")
+    replay.add_argument("--screenshot", default=None, help="Also render this report to a PNG")
+    replay.set_defaults(func=cmd_replay)
+
+    gui = subparsers.add_parser("gui", help="Live board viewer, or replay a played sub-game (PRD-06)")
+    gui.add_argument("--log-dir", type=Path, default=None, help="Where the artifacts live (default: logs/)")
+    gui.add_argument("--game-id", default=None, help="Replay this series instead of watching a live one")
+    gui.add_argument("--sub-game", type=int, default=1, help="Which sub-game to replay (default: 1)")
+    gui.add_argument("--frame-ms", type=int, default=450, help="Replay frame interval in ms (default: 450)")
+    gui.add_argument("--screenshot", default=None, help="Render one frame to this PNG and exit")
+    gui.add_argument("--frame", type=int, default=1, help="Which replay turn to screenshot (default: 1)")
+    gui.set_defaults(func=cmd_gui)
 
     authorize = subparsers.add_parser("authorize-gmail", help="Run the OAuth consent flow once (opens a browser)")
     authorize.add_argument("--secrets-dir", default=None, help="Default: the repo-external secrets directory")

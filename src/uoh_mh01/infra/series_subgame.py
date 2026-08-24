@@ -7,12 +7,14 @@ the project's ~150-line budget.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from ..domain.brain_base import resolve_strategy
 from ..domain.match import UndefinedOutcomeError
 from ..domain.sealed_payload import build_audit_payload
 from ..domain.state import Side
+from ..gui.live_state import LIVE_STATE_NAME, LiveStatePublisher
 from .artifacts import LogArtifactBuilder, build_config_artifact, now_iso, write_json
 from .audit import verify_revealed
 from .mcp_client import send_audit_reveal
@@ -58,6 +60,9 @@ async def play_one_sub_game(
         strategy=this_sub_game_strategy,
         sub_game_number=sub_game_number,
         repo_commit=repo_commit,
+        live_publisher=LiveStatePublisher(
+            Path(out_dir) / LIVE_STATE_NAME, game_id=game_id, game_uid=game_uid
+        ),
     )
     series_runtime.start_sub_game(sub_game_number, peer_runtime)
     # Rule #53: the host-spec declaration is sealed BEFORE the first move, so

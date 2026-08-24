@@ -1,4 +1,4 @@
-# PLAN — Development Plan (Thief agent)
+# PLAN — Development Plan (Police agent)
 
 Development follows the seven-stage priority ladder from Ch. 10.3 of the rulebook.
 Each stage gets its own PRD file, is built and tested in isolation, and is verified
@@ -12,7 +12,7 @@ moment confined to the most recently added layer.
 | 3 | Commit-Reveal integrity (SHA-256) + audit log | `prd/PRD-03-commit-reveal.md` | Implementation done, not committed |
 | 4 | Pheromones, scent field, belief map | `prd/PRD-04-belief.md` | Implementation done, not committed |
 | 5 | Strategy brain + verbal layer (LLM) | `prd/PRD-05-strategy.md` | Not started |
-| 6 | GUI + Replay viewer | `prd/PRD-06-gui-replay.md` | Not started |
+| 6 | GUI + Replay viewer | `prd/PRD-06-gui-replay.md` | Implementation done |
 | 7 | Public tunnel, Gatekeeper, Gmail reporting | `prd/PRD-07-live-league.md` | Not started |
 
 ## Definition of done per stage

@@ -161,3 +161,63 @@ def test_the_peer_command_calls_the_send_helper_at_all():
     import inspect
 
     assert "_send_series_report(" in inspect.getsource(cli_commands.cmd_peer)
+
+
+# --- failures print a reason, not a stack trace ---------------------------------
+
+
+def _peer_that_raises(monkeypatch, tmp_path, exc, argv=()):
+    from uoh_mh01.infra import series
+
+    async def boom(role, config, peer_config, **kwargs):
+        raise exc
+
+    monkeypatch.setattr(series, "run_series", boom)
+    return main(["peer", "--role", OWN_ROLE, "--log-dir", str(tmp_path), *argv])
+
+
+def test_an_unreachable_opponent_prints_a_sentence_not_a_traceback(monkeypatch, tmp_path, capsys):
+    """The opponent not being up yet is an ordinary operational outcome. A
+    five-frame traceback describes it far worse than one line does."""
+    from uoh_mh01.infra.watchdog import OpponentUnresponsiveError
+
+    code = _peer_that_raises(monkeypatch, tmp_path, OpponentUnresponsiveError("negotiate", 30))
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "Handshake FAILED" in captured.out
+    assert "negotiate" in captured.out
+    assert "opponent_url" in captured.out, "it should say what to check"
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_an_unexpected_error_is_summarised_and_points_at_the_debug_switch(monkeypatch, tmp_path, capsys):
+    code = _peer_that_raises(monkeypatch, tmp_path, RuntimeError("something odd"))
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "RuntimeError: something odd" in captured.out
+    assert "UOH_DEBUG" in captured.out
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_the_debug_switch_gives_the_traceback_back(monkeypatch, tmp_path):
+    """Swallowing every exception would make a real bug undiagnosable, so the
+    escape hatch has to actually work."""
+    monkeypatch.setenv("UOH_DEBUG", "1")
+    with pytest.raises(RuntimeError, match="something odd"):
+        _peer_that_raises(monkeypatch, tmp_path, RuntimeError("something odd"))
+
+
+def test_cli_output_is_pure_ascii():
+    """This console is cp1255. An em-dash renders as a replacement character,
+    which makes a perfectly healthy run look broken - and at worst raises
+    UnicodeEncodeError before anything useful is printed."""
+    import inspect
+
+    from uoh_mh01 import cli_commands, cli_replay
+
+    for module in (cli_commands, cli_replay):
+        for line_number, line in enumerate(inspect.getsource(module).splitlines(), 1):
+            if "print(" in line:
+                assert line.isascii(), f"{module.__name__}:{line_number}: {line.strip()}"

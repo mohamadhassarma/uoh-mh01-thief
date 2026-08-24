@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from uoh_mh01.domain.config import load_config
 from uoh_mh01.report import auto_send, ledger
 from uoh_mh01.report.auto_send import blocking_reasons, send_counted_series
@@ -464,3 +466,253 @@ def test_a_failed_send_can_be_retried_but_a_sent_one_cannot(tmp_path):
     # ...and now it is closed for good.
     assert not _send(tmp_path, up).sent
     assert len(up.sends) == 1
+
+
+# --- a DECLARED CORRECTION: the one sanctioned second send ----------------------
+
+
+def _correct(tmp_path, service, reason="the first send was an accident on a friendly", **kwargs):
+    return _send(tmp_path, service, correction=reason, **kwargs)
+
+
+def _sent_once(tmp_path):
+    """Get a series into the state this feature exists for: already reported."""
+    _series(tmp_path)
+    first = _send(tmp_path, StubGmail())
+    assert first.sent
+    return tmp_path / "counted_games.json"
+
+
+def test_without_a_correction_a_reported_series_stays_closed(tmp_path):
+    """The baseline the correction must not erode."""
+    path = _sent_once(tmp_path)
+    service = StubGmail()
+    assert not _send(tmp_path, service).sent
+    assert service.sends == []
+    assert len(ledger.attempts("uid-1234", path=path)) == 1
+
+
+def test_a_declared_correction_sends_where_a_plain_resend_would_not(tmp_path):
+    _sent_once(tmp_path)
+    service = StubGmail()
+    outcome = _correct(tmp_path, service)
+    assert outcome.sent, outcome.reason
+    assert outcome.attempt == 2
+    assert len(service.sends) == 1
+
+
+def test_a_correction_appends_and_never_edits_the_row_it_supersedes(tmp_path):
+    """The ledger is the evidence that a report was sent. Evidence that can be
+    rewritten when it becomes inconvenient is not evidence."""
+    path = _sent_once(tmp_path)
+    before = json.loads(path.read_text(encoding="utf-8"))["counted_series"][0]
+
+    assert _correct(tmp_path, StubGmail(), reason="wrong tie rule").sent
+
+    rows = ledger.attempts("uid-1234", path=path)
+    assert len(rows) == 2
+    assert rows[0] == before, "the superseded row must be byte-for-byte untouched"
+    assert rows[1]["status"] == ledger.STATUS_SENT
+    assert rows[1]["correction_of"] == 1
+    assert rows[1]["correction_reason"] == "wrong tie rule"
+
+
+def test_a_correction_does_not_inflate_the_game_count_declaration(tmp_path):
+    """Two rows, one series. Counting rows would overstate how many counted
+    games this group has played - a false declaration under ch.9.2.1."""
+    path = _sent_once(tmp_path)
+    assert ledger.counted_games_played(path=path) == 1
+    assert _correct(tmp_path, StubGmail()).sent
+    assert ledger.counted_games_played(path=path) == 1
+
+
+def test_the_latest_attempt_is_what_the_interlock_reads(tmp_path):
+    path = _sent_once(tmp_path)
+    assert _correct(tmp_path, StubGmail()).sent
+    assert ledger.attempt_of(ledger.find("uid-1234", path=path)) == 2
+    # ...and that correction is itself now closed to a plain resend.
+    service = StubGmail()
+    assert not _send(tmp_path, service).sent
+    assert service.sends == []
+
+
+def test_a_correction_needs_something_to_correct(tmp_path):
+    """THE property that keeps the interlock intact: with no delivered report
+    on record, the flag refuses rather than waving a first send through."""
+    _series(tmp_path)
+    service = StubGmail()
+    outcome = _correct(tmp_path, service)
+    assert not outcome.sent
+    assert service.sends == []
+    assert any("no earlier send" in b for b in outcome.blockers)
+
+
+def test_a_send_of_unknown_fate_is_not_correctable(tmp_path):
+    """A `sending` row may or may not have reached the lecturer. Correcting it
+    would be guessing, and guessing wrong means two reports for one series."""
+    _series(tmp_path)
+    path = tmp_path / "counted_games.json"
+    ledger.record_counted_series(
+        opponent_group_id="them", game_id="them-vs-us", game_uid="uid-1234", ended_at="x",
+        status=ledger.STATUS_SENDING, path=path,
+    )
+    outcome = _correct(tmp_path, StubGmail())
+    assert not outcome.sent
+    assert any("no delivered report to supersede" in b for b in outcome.blockers)
+
+
+def test_a_correction_must_state_a_reason(tmp_path):
+    _sent_once(tmp_path)
+    outcome = _correct(tmp_path, StubGmail(), reason="   ")
+    assert not outcome.sent
+    assert any("must state its reason" in b for b in outcome.blockers)
+
+
+def test_a_friendly_cannot_be_a_correction(tmp_path):
+    _sent_once(tmp_path)
+    outcome = _send(tmp_path, StubGmail(), counted=False, to="me@example.com", correction="whatever")
+    assert not outcome.sent
+    assert any("--counted" in b for b in outcome.blockers)
+
+
+def test_a_correction_still_refuses_an_unfit_report(tmp_path):
+    """It skips the duplicate-send blocker and nothing else. A correction that
+    is itself wrong is not a correction."""
+    _series(tmp_path, passed=False)
+    path = tmp_path / "counted_games.json"
+    ledger.record_counted_series(
+        opponent_group_id="them", game_id="them-vs-us", game_uid="uid-1234", ended_at="x",
+        status=ledger.STATUS_SENT, path=path,
+    )
+    service = StubGmail()
+    outcome = _correct(tmp_path, service)
+    assert not outcome.sent
+    assert service.sends == []
+    assert any("audit" in b for b in outcome.blockers)
+
+
+def test_a_correction_is_still_gatekeeper_wrapped(tmp_path, monkeypatch):
+    from uoh_mh01.report import pipeline
+
+    executed = []
+    real = pipeline.Gatekeeper
+
+    class Spy(real):
+        def execute(self, call, *args, **kwargs):
+            executed.append(self.service)
+            return super().execute(call, *args, **kwargs)
+
+    _sent_once(tmp_path)
+    monkeypatch.setattr(pipeline, "Gatekeeper", Spy)
+    assert _correct(tmp_path, StubGmail()).sent
+    assert executed == ["gmail"]
+
+
+def test_a_correction_still_goes_to_the_lecturer(tmp_path):
+    import base64
+    from email import message_from_bytes
+
+    from uoh_mh01.infra.gmail_sender import LECTURER_REPORT_ADDRESS
+
+    _sent_once(tmp_path)
+    service = StubGmail()
+    assert _correct(tmp_path, service).sent
+    raw = base64.urlsafe_b64decode(service.sends[0]["raw"])
+    assert message_from_bytes(raw)["To"] == LECTURER_REPORT_ADDRESS
+
+
+def test_a_row_written_before_corrections_existed_counts_as_attempt_one(tmp_path):
+    """The real ledger's ali-ahm1 row has no `attempt` key. It must still be
+    superseded correctly rather than treated as a different series."""
+    _series(tmp_path)
+    path = tmp_path / "counted_games.json"
+    path.write_text(
+        json.dumps({
+            "schema_version": "1.0",
+            "counted_series": [{
+                "opponent_group_id": "them", "game_id": "them-vs-us", "game_uid": "uid-1234",
+                "ended_at": "2026-08-23T21:23:31+00:00", "status": "sent",
+                "detail": "gmail message id 1a03085ccd9e11fa",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    outcome = _correct(tmp_path, StubGmail())
+    assert outcome.sent, outcome.reason
+    rows = ledger.attempts("uid-1234", path=path)
+    assert ledger.attempt_of(rows[0]) == 1
+    assert rows[1]["correction_of"] == 1
+
+
+# --- the CLI surface a correction is reachable through --------------------------
+
+
+def test_correction_without_counted_is_refused_by_the_cli(monkeypatch, capsys):
+    from uoh_mh01.__main__ import main
+
+    called = []
+    monkeypatch.setattr(auto_send, "send_counted_series", lambda *a, **k: called.append(k))
+    code = main(["report", "--game-id", "g", "--correction", "because"])
+    assert code == 2
+    assert called == []
+    assert "--counted" in capsys.readouterr().err
+
+
+def test_the_peer_command_cannot_declare_a_correction():
+    """A correction is a human deciding an already-delivered report was wrong.
+    The automatic sender must never be able to authorize one for itself, so the
+    flag does not exist on `peer` at all."""
+    from uoh_mh01.__main__ import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["peer", "--role", "police", "--counted", "--correction", "because"])
+    assert exc.value.code == 2
+
+
+def _cli_report(monkeypatch, tmp_path, argv, outcome=None):
+    """Drive `main(["report", ...])` with only the send stubbed."""
+    from uoh_mh01.__main__ import main
+
+    _series(tmp_path)
+    calls = []
+    result = outcome or auto_send.AutoSendOutcome(sent=True, message_id="stub-1", attempt=1)
+    monkeypatch.setattr(auto_send, "send_counted_series", lambda *a, **k: calls.append(k) or result)
+    code = main(["report", "--game-id", "them-vs-us", "--log-dir", str(tmp_path), *argv])
+    return code, calls
+
+
+def test_the_cli_threads_the_correction_reason_to_the_sender(monkeypatch, tmp_path, capsys):
+    sent = auto_send.AutoSendOutcome(sent=True, message_id="stub-1", attempt=2)
+    code, calls = _cli_report(
+        monkeypatch, tmp_path, ["--counted", "--correction", "accidental send on a friendly"], outcome=sent
+    )
+    assert code == 0
+    assert calls and calls[0]["correction"] == "accidental send on a friendly"
+    assert calls[0]["counted"] is True
+
+    captured = capsys.readouterr()
+    assert "DECLARED CORRECTION" in captured.err
+    assert "accidental send on a friendly" in captured.err
+    # The operator must be able to see it landed as a supersession, not a first send.
+    assert "attempt 2" in captured.out
+
+
+def test_an_ordinary_counted_report_carries_no_correction_and_warns_it_is_manual(monkeypatch, tmp_path, capsys):
+    code, calls = _cli_report(monkeypatch, tmp_path, ["--counted"])
+    assert code == 0
+    assert calls[0]["correction"] is None
+    captured = capsys.readouterr()
+    assert "MANUAL FALLBACK" in captured.err
+    assert "DECLARED CORRECTION" not in captured.err
+
+
+def test_a_refused_correction_exits_nonzero_and_lists_why(monkeypatch, tmp_path, capsys):
+    refused = auto_send.AutoSendOutcome(
+        sent=False, reason="this is not a valid declared correction",
+        blockers=["there is no earlier send for this series to correct"],
+    )
+    code, _ = _cli_report(monkeypatch, tmp_path, ["--counted", "--correction", "nope"], outcome=refused)
+    assert code == 3
+    err = capsys.readouterr().err
+    assert "NOT SENT" in err
+    assert "no earlier send" in err

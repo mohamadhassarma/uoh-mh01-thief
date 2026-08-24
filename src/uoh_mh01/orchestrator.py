@@ -68,12 +68,16 @@ class PeerRuntime(_MatchLoopMixin, _TurnSenderMixin, _TurnReceiverMixin, _Sealin
         strategy: Strategy | None = None,
         *,
         sub_game_number: int = 1,
+        live_publisher=None,
         repo_commit: str | None = None,
     ):
         self.role = role
         self.config = config
         self.peer_config = peer_config
         self.sub_game_number = sub_game_number
+        # PRD-06: the live viewer's snapshot sink. None in every test and in
+        # any run with no viewer; never load-bearing for the game.
+        self.live_publisher = live_publisher
         # The exact commit playing this series (book ch.5), sealed into every
         # step-0 record. None only when git could not answer.
         self.repo_commit = repo_commit

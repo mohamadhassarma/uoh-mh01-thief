@@ -60,16 +60,48 @@ def already_reported(game_uid: str, *, path: Path = LEDGER_PATH) -> bool:
     return bool(row and row.get("status") == STATUS_SENT)
 
 
+def attempt_of(row: dict[str, Any]) -> int:
+    """Rows written before corrections existed carry no `attempt`; they are all
+    the first one."""
+    return int(row.get("attempt", 1))
+
+
+def attempts(game_uid: str, *, path: Path = LEDGER_PATH) -> list[dict[str, Any]]:
+    """Every send recorded for this series, oldest first. A DECLARED CORRECTION
+    appends a new attempt rather than rewriting the old row, so this is the
+    audit trail: what was sent, when, and why each later one superseded the
+    one before it."""
+    rows = [row for row in _load(path)["counted_series"] if row["game_uid"] == game_uid]
+    return sorted(rows, key=attempt_of)
+
+
 def find(game_uid: str, *, path: Path = LEDGER_PATH) -> dict[str, Any] | None:
-    return next((row for row in _load(path)["counted_series"] if row["game_uid"] == game_uid), None)
+    """This series' CURRENT state - its highest-numbered attempt.
+
+    Not the first matching row: a correction leaves the superseded row in place
+    untouched, so the newest row is the one that says where the series actually
+    stands and the one the duplicate-send interlock must read.
+    """
+    rows = attempts(game_uid, path=path)
+    return rows[-1] if rows else None
+
+
+def next_attempt(game_uid: str, *, path: Path = LEDGER_PATH) -> int:
+    row = find(game_uid, path=path)
+    return attempt_of(row) + 1 if row else 1
 
 
 def counted_games_played(*, path: Path = LEDGER_PATH) -> int:
     """How many counted series this group has played — the honest answer to
     the book's Game-Count Declaration (ch.9.2.1). Our own count only: the
     opponent's is their unverifiable claim about themselves, and inventing a
-    number for them is exactly what `UNCLAIMED` exists to avoid."""
-    return len(_load(path)["counted_series"])
+    number for them is exactly what `UNCLAIMED` exists to avoid.
+
+    DISTINCT series, not rows. A correction adds a second row to a series that
+    was already counted once; counting the rows would inflate the declaration
+    and make it false in precisely the way rules 37/38 punish.
+    """
+    return len({row["game_uid"] for row in _load(path)["counted_series"]})
 
 
 def record_counted_series(
@@ -80,18 +112,33 @@ def record_counted_series(
     ended_at: str,
     status: str = STATUS_SENT,
     detail: str | None = None,
+    attempt: int = 1,
+    correction_of: int | None = None,
+    correction_reason: str | None = None,
     path: Path = LEDGER_PATH,
 ) -> dict[str, Any]:
-    """Insert or UPDATE this series' row and persist.
+    """Insert or UPDATE one attempt's row and persist.
 
-    Keyed on `game_uid`, so re-running the pipeline can never inflate the
-    count — it only ever moves an existing row's `status` along
+    Keyed on `(game_uid, attempt)`, so re-running the pipeline can never
+    inflate anything — it only moves an existing row's `status` along
     (`sending` -> `sent` / `failed`).
+
+    A DECLARED CORRECTION passes the next `attempt` with `correction_of` and a
+    `correction_reason`, which appends. Nothing is deleted and no earlier row is
+    edited: the ledger is the evidence that a report was sent, and evidence that
+    can be rewritten when it becomes inconvenient is not evidence.
     """
     ledger = _load(path)
-    row = next((r for r in ledger["counted_series"] if r["game_uid"] == game_uid), None)
+    row = next(
+        (r for r in ledger["counted_series"] if r["game_uid"] == game_uid and attempt_of(r) == attempt), None
+    )
     if row is None:
         row = {"opponent_group_id": opponent_group_id, "game_id": game_id, "game_uid": game_uid}
+        if attempt != 1:
+            row["attempt"] = attempt
+        if correction_of is not None:
+            row["correction_of"] = correction_of
+            row["correction_reason"] = correction_reason
         ledger["counted_series"].append(row)
     row.update(ended_at=ended_at, status=status)
     if detail is not None:

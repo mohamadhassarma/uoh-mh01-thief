@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import random
 import sys
 from pathlib import Path
@@ -15,6 +16,10 @@ from .domain.match import FIRST_MOVER, MatchResult, UndefinedOutcomeError, run_m
 from .domain.state import Side
 from .domain.strategies import make_random_strategy
 from .shared.peer_config import PeerConfigError, load_peer_config
+
+# Set this to get the traceback back when a failure is a real bug rather
+# than an absent opponent.
+DEBUG_ENV = "UOH_DEBUG"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "game.json"
@@ -52,7 +57,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     try:
         result = run_match(config, police_strategy, thief_strategy)
     except UndefinedOutcomeError as exc:
-        print("Match ended in an UNDEFINED state (not a crash — a known open rules question):")
+        print("Match ended in an UNDEFINED state (not a crash - a known open rules question):")
         print(f"  {exc}\n")
         print("Move log up to that point:")
         # UndefinedOutcomeError carries no state; re-run is not attempted here
@@ -65,7 +70,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     print(f"Terminal condition: {result.terminal_condition.value}")
     if result.offending_side is not None:
         print(f"Offending side: {result.offending_side.value}")
-    print(f"Final score — police: {result.police_score}, thief: {result.thief_score}")
+    print(f"Final score - police: {result.police_score}, thief: {result.thief_score}")
     return 0
 
 
@@ -93,13 +98,14 @@ def cmd_peer(args: argparse.Namespace) -> int:
     print(f"response_timeout_sec={config.network.response_timeout_sec} "
           f"watchdog_timeout_sec={config.network.watchdog_timeout_sec} "
           f"turn_timeout_seconds={peer_config.turn_timeout_seconds}")
-    print("Waiting for opponent..." if role is not FIRST_MOVER else "Starting — I move first.")
+    print("Waiting for opponent..." if role is not FIRST_MOVER else "Starting - I move first.")
     print()
 
     out_dir = args.log_dir or (REPO_ROOT / "logs")
 
     from .infra.negotiation import NegotiationRefusedError
     from .infra.series import run_series
+    from .infra.watchdog import OpponentUnresponsiveError
     from .shared.build_commit import DirtyWorkingTreeError
 
     print(f"Playing a {config.network.num_games}-sub-game series, role alternating (natural role: {role.value})...")
@@ -113,9 +119,20 @@ def cmd_peer(args: argparse.Namespace) -> int:
         print("REFUSED before the handshake - nothing was played:")
         print(f"  {exc}")
         return 2
-    except NegotiationRefusedError as exc:
-        print("Handshake REFUSED — the series never started playing:")
+    except (NegotiationRefusedError, OpponentUnresponsiveError) as exc:
+        # A handshake that cannot complete is an ordinary operational outcome -
+        # the opponent is not up yet, or the URL is wrong - and a five-frame
+        # traceback describes it far worse than one sentence does.
+        print("Handshake FAILED - the series never started playing:")
         print(f"  {exc}")
+        print("  Check that the opponent process is running and that opponent_url is correct.")
+        return 2
+    except Exception as exc:  # noqa: BLE001 - a CLI must print, not traceback
+        if os.environ.get(DEBUG_ENV):
+            raise
+        print("The series stopped with an unexpected error:")
+        print(f"  {type(exc).__name__}: {exc}")
+        print(f"  Set {DEBUG_ENV}=1 to re-run with the full traceback.")
         return 2
 
     for summary in summaries:
@@ -126,7 +143,7 @@ def cmd_peer(args: argparse.Namespace) -> int:
             print(f"  DISPUTED: mine={summary['disputed']['mine']!r} theirs={summary['disputed']['theirs']!r}")
         else:
             print(f"  Terminal condition: {summary['terminal_condition']}")
-            print(f"  Score — police: {summary['police_score']}, thief: {summary['thief_score']}")
+            print(f"  Score - police: {summary['police_score']}, thief: {summary['thief_score']}")
         # Only MY verdict on THEM exists: with an ack-only wire the opponent's
         # verdict on me never crosses back (docs/WIRE.md §5).
         print(f"  Audit of opponent by me: {summary['audit_of_opponent_by_me']}")

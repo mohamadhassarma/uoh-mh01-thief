@@ -52,6 +52,7 @@ class AutoSendOutcome:
     game_uid: str | None = None
     counted: bool = True
     recipient: str | None = None
+    attempt: int = 1
 
 
 def blocking_reasons(result: dict[str, Any], *, ledger_path: Path | None) -> list[str]:
@@ -71,6 +72,43 @@ def blocking_reasons(result: dict[str, Any], *, ledger_path: Path | None) -> lis
     return reasons
 
 
+def correction_refusals(reason: str, *, counted: bool, superseded: dict[str, Any] | None) -> list[str]:
+    """When a DECLARED CORRECTION is allowed to pass the duplicate-send
+    interlock, and nothing else.
+
+    The interlock exists because an automatic sender holding live mail
+    credentials must not be able to mail the lecturer twice for one series.
+    A correction is the one case where a second send is intended - a human has
+    decided the first report was wrong and is saying so on the record. Every
+    condition below keeps that narrow:
+
+      * COUNTED only. A friendly never touches the ledger, so there is nothing
+        for a correction to mean there.
+      * A REASON is mandatory and goes in the ledger. An unexplained second
+        send is indistinguishable from the runaway loop the interlock is for.
+      * There must ALREADY BE A DELIVERED SEND to supersede. This is what stops
+        the flag being a general bypass: with no `sent` row it refuses, so it
+        can never turn a first send into an unguarded one.
+      * A `sending` row is NOT correctable. That row means a send whose fate is
+        unknown - it may have been delivered. Correcting a send that may not
+        have happened is a guess, and the interlock's whole job is to stop
+        guesses becoming a second mail to the lecturer.
+    """
+    problems = []
+    if not counted:
+        problems.append("a correction re-submits a COUNTED report to the lecturer; use --counted")
+    if not reason.strip():
+        problems.append("a correction must state its reason - it is recorded in the ledger")
+    if superseded is None:
+        problems.append("there is no earlier send for this series to correct")
+    elif superseded.get("status") != ledger.STATUS_SENT:
+        problems.append(
+            f"the ledger's latest row for this series is {superseded.get('status')!r}, not "
+            f"{ledger.STATUS_SENT!r} - there is no delivered report to supersede"
+        )
+    return problems
+
+
 def send_counted_series(
     logs_dir: Path,
     game_id: str,
@@ -81,6 +119,7 @@ def send_counted_series(
     sender: str = "me",
     ledger_path: Path = ledger.LEDGER_PATH,
     to: str | None = None,
+    correction: str | None = None,
     service: Any = None,
 ) -> AutoSendOutcome:
     """Build, check, and mail this series' report. Called by the peer process
@@ -103,8 +142,24 @@ def send_counted_series(
     path = pipeline.write(result, logs_dir)
     game_uid = result["game_uid"]
 
-    if counted:
-        existing = ledger.find(game_uid, path=ledger_path)
+    superseded = ledger.find(game_uid, path=ledger_path) if counted else None
+    attempt = 1
+    if correction is not None:
+        problems = correction_refusals(correction, counted=counted, superseded=superseded)
+        if problems:
+            logger.error("REFUSING the declared correction: %s", "; ".join(problems))
+            return AutoSendOutcome(
+                sent=False,
+                reason="this is not a valid declared correction",
+                blockers=problems,
+                result_path=path,
+                game_uid=game_uid,
+                counted=counted,
+            )
+        attempt = ledger.next_attempt(game_uid, path=ledger_path)
+
+    if counted and correction is None:
+        existing = superseded
         if existing is not None and existing.get("status") in BLOCKING_STATUSES:
             # `sent` is obvious. `sending` covers a row stranded by a process
             # killed mid-send: a missed send is recoverable by hand, a duplicate
@@ -118,7 +173,11 @@ def send_counted_series(
             logger.warning("NOT auto-sending: %s", reason)
             return AutoSendOutcome(sent=False, reason=reason, result_path=path, game_uid=game_uid, counted=counted)
 
-    blockers = blocking_reasons(result, ledger_path=ledger_path if counted else None)
+    # A correction skips the duplicate-send blocker and NOTHING else: a failed
+    # audit or a missing mandatory field still stops it. A correction that is
+    # itself unfit is not a correction.
+    check_duplicates = counted and correction is None
+    blockers = blocking_reasons(result, ledger_path=ledger_path if check_duplicates else None)
     if blockers:
         logger.error("NOT auto-sending the report — %s blocker(s): %s", len(blockers), "; ".join(blockers))
         return AutoSendOutcome(
@@ -131,20 +190,24 @@ def send_counted_series(
         )
 
     opponent = next((g for g in result["groups"] if g != own_group_id), None)
+    corrects = ledger.attempt_of(superseded) if (correction is not None and superseded) else None
     if counted:
-        _record(result, opponent, ledger.STATUS_SENDING, ledger_path)
+        _record(result, opponent, ledger.STATUS_SENDING, ledger_path,
+                attempt=attempt, correction_of=corrects, correction_reason=correction)
     try:
         sent = pipeline.send_report(path, result, config, counted=counted, sender=sender, to=to, service=service)
     except Exception as exc:  # noqa: BLE001 - recorded, then surfaced to the operator
         if counted:
-            _record(result, opponent, ledger.STATUS_FAILED, ledger_path, detail=str(exc)[:300])
+            _record(result, opponent, ledger.STATUS_FAILED, ledger_path, detail=str(exc)[:300],
+                    attempt=attempt, correction_of=corrects, correction_reason=correction)
         logger.error("automatic report send FAILED: %s", exc)
         return AutoSendOutcome(
             sent=False, reason=f"send failed: {exc}", result_path=path, game_uid=game_uid, counted=counted
         )
 
     if counted:
-        _record(result, opponent, ledger.STATUS_SENT, ledger_path)
+        _record(result, opponent, ledger.STATUS_SENT, ledger_path, detail=f"gmail message id {sent.get('id')}",
+                attempt=attempt, correction_of=corrects, correction_reason=correction)
     logger.info("report sent for %s (message id %s)", game_id, sent.get("id"))
     return AutoSendOutcome(
         sent=True,
@@ -153,11 +216,20 @@ def send_counted_series(
         game_uid=game_uid,
         counted=counted,
         recipient=to,
+        attempt=attempt,
     )
 
 
 def _record(
-    result: dict[str, Any], opponent: str | None, status: str, path: Path, *, detail: str | None = None
+    result: dict[str, Any],
+    opponent: str | None,
+    status: str,
+    path: Path,
+    *,
+    detail: str | None = None,
+    attempt: int = 1,
+    correction_of: int | None = None,
+    correction_reason: str | None = None,
 ) -> None:
     ledger.record_counted_series(
         opponent_group_id=opponent or "unknown",
@@ -166,5 +238,8 @@ def _record(
         ended_at=result["sub_games"][-1]["ended_at"],
         status=status,
         detail=detail,
+        attempt=attempt,
+        correction_of=correction_of,
+        correction_reason=correction_reason,
         path=path,
     )

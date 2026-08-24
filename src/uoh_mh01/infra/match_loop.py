@@ -48,6 +48,10 @@ class _MatchLoopMixin:
         try:
             while self.outcome is None:
                 self.watchdog.assert_alive()
+                # PRD-06 live viewer. The publisher dedupes and swallows its own
+                # failures, so this cannot slow or break the loop it observes.
+                if self.live_publisher is not None:
+                    self.live_publisher.publish(self)
                 if self._pending_error is not None:
                     raise self._pending_error
                 if self.whose_turn is self.role:
