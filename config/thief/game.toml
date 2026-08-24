@@ -12,8 +12,14 @@ my_port = 8802                              # MY MCP server port
 opponent_url = "https://perdurable-mireille-nonzoologically.ngrok-free.dev/mcp" # the only thing I know about the opponent
 turn_timeout_seconds = 180
 
-# [strategy] -- optional: point at YOUR brain subclass (else the shipped heuristic runs)
-# thief_class = "uoh_mh01.strategy:MyThiefBrain"
+[strategy]
+# PRD-05: BOTH classes are required, because roles alternate across a series
+# (odd sub-games natural role, even sub-games swapped). A missing entry is not
+# an error - `resolve_strategy(None, ...)` legitimately falls back to the
+# shipped random baseline - so an unset class is silent, and it was: every
+# thief-role sub-game we played ran the random baseline. See README section 5.
+police_class = "uoh_mh01.domain.police_brain:ContainmentPoliceBrain"
+thief_class = "uoh_mh01.domain.thief_brain:EvasiveThiefBrain"
 
 [trash_talk]
 # HOW the banter is produced. The MOVE is always pure Python.

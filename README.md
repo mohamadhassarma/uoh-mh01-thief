@@ -404,6 +404,37 @@ assumptions about evasion, and those assumptions did not transfer. A genuinely
 diverse opponent pool during development, rather than self-play plus a single
 sparring peer, is the thing that was missing.
 
+### The defect we shipped: a brain that was never selected
+
+`EvasiveThiefBrain` (`domain/thief_brain.py`) was written, unit-tested, and
+used as the measurement opponent for every police figure in section 4. It was
+never actually **selected**. `thief_class` was left unconfigured in both
+repositories' `game.toml`, and `resolve_strategy(None, ...)` legitimately falls
+back to the shipped random baseline - so **every thief-role sub-game in our
+counted series was played by a random mover**, not by the brain this report
+describes. Because roles alternate, that is half of every series.
+
+It is consistent with everything we measured and everything that happened. The
+harness says a random police wins 4.2% where `ContainmentPoliceBrain` wins
+68.3%; the same collapse on the thief side is exactly the shape of our worst
+live result, where khm-mn17's police captured ours repeatedly while their thief
+evaded ours every time. We attributed that entirely to their strategy being
+better. Half of it was ours not being switched on.
+
+**No test could have caught this, and that is the point.** The fallback is not
+an error - it is documented, deliberate behaviour that makes the shipped
+baseline runnable out of the box, so there was nothing to raise, log, or fail
+on. An unset class is indistinguishable from a deliberate choice of the
+baseline. And it never surfaced in play for the same reason as every other
+defect in this section: **both of our peers were configured the same way, so
+they agreed with each other.** Self-play cannot reveal a shared misconfiguration
+any more than it can reveal a shared misreading of the spec. It took an
+opponent's results being inexplicably good to make anyone look at the config.
+
+Both classes are now set explicitly in both repositories, and
+`test_peer_config.py` asserts that each role resolves to a real brain rather
+than to the baseline - the check that would have caught it.
+
 ### Every real defect surfaced on contact with foreign code
 
 This is the reflection that matters most, and it is uncomfortable. The test suite

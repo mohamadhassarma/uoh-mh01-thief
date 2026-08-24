@@ -83,6 +83,35 @@ def test_real_toml_loads_from_disk():
     assert 1 <= peer.my_port <= 65535
 
 
+
+def test_the_shipped_config_selects_a_real_brain_for_BOTH_roles():
+    """Roles alternate across a series, so an unset class is a silent
+    downgrade, not an error.
+
+    `resolve_strategy(None, ...)` legitimately falls back to the shipped
+    random baseline, which is why no test could catch this: the fallback is
+    correct behaviour, and both of our peers were configured the same way, so
+    they agreed. `thief_class` was left unset in both repos and every
+    thief-role sub-game we played ran the random baseline. See README
+    section 5.
+    """
+    from pathlib import Path
+
+    from uoh_mh01.domain.police_brain import ContainmentPoliceBrain
+    from uoh_mh01.domain.state import Side
+    from uoh_mh01.domain.thief_brain import EvasiveThiefBrain
+    from uoh_mh01.infra.series_subgame import _strategy_for_sub_game
+
+    repo_root = Path(__file__).resolve().parents[1]
+    peer = load_peer_config("thief", repo_root / "config" / "thief" / "game.toml", repo_root / "config" / "game.json")
+
+    assert peer.police_class, "police-role sub-games would fall back to random"
+    assert peer.thief_class, "thief-role sub-games would fall back to random"
+
+    for role, expected in ((Side.POLICE, ContainmentPoliceBrain), (Side.THIEF, EvasiveThiefBrain)):
+        brain = _strategy_for_sub_game(peer, role, seed=1, sub_game_number=1)
+        assert isinstance(brain, expected), f"{role.value} resolved to {type(brain).__name__}"
+
 # --- overlay rule: the signed contract always wins on a shared key ---
 
 
