@@ -1,6 +1,6 @@
 {
   "schema_version": "1.2",
-  "agreed_between": ["AmalOnly", "uoh-mh01"],
+  "agreed_between": ["khm-mn17", "uoh-mh01"],
   "board_and_agents": {
     "grid_size": 7,
     "num_agents": 2,
@@ -10,7 +10,7 @@
     "axis_start_index": 0
   },
   "world": {
-    "map_area": "New York",
+    "map_area": "Haifa",
     "hint_max_words": 15
   },
   "movement_and_barriers": {
